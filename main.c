@@ -2,6 +2,7 @@
 #include <stdlib.h>  /* malloc */
 #include <stdio.h>   /* printf */
 #include "uthash.h"
+#include "htslib/sam.h"
 
 const int MAX_LINE_LENGTH = 256;
 
@@ -13,7 +14,7 @@ struct rt2label {
 
 struct label2fp {
     char label[MAX_LINE_LENGTH];             /* key (string is WITHIN the structure) */
-    FILE* fp;
+    samFile* fp;
     UT_hash_handle hh;         /* makes this structure hashable */
 };
 
@@ -90,7 +91,7 @@ struct rt2label* rt_hash(char *path, const int MAX_LINE_LENGTH) {
     return r2l;
 }
 
-struct label2fp* hash_labels(struct rt2label *r2l, const char *prefix, int MAX_LINE_LENGTH) {
+struct label2fp* hash_labels(struct rt2label *r2l, const char *prefix, int MAX_LINE_LENGTH, sam_hdr_t *header) {
     struct rt2label *s; // Declare a temporary variable to iterate over the rt2label table
     struct label2fp *l2f = NULL; // Initialize l2f to hold the label2fp table
     struct label2fp *tmp, *new_l2f; // Declare temporary variables for HASH_FIND_STR
@@ -115,10 +116,14 @@ struct label2fp* hash_labels(struct rt2label *r2l, const char *prefix, int MAX_L
         char outpath[MAX_LINE_LENGTH];
         strcpy(outpath, prefix);
         strcat(outpath, s->label);
+        strcat(outpath, ".sam");
 
         // Create file handle from the path generated above
         // These handles must be closed manually!
-        new_l2f->fp = fopen(outpath, "w");
+        new_l2f->fp = sam_open(outpath, "w");
+
+        // Populate header
+        sam_hdr_write(new_l2f->fp, header);
 
         // Add the new element to the hash table
         HASH_ADD_STR(l2f, label, new_l2f);
@@ -129,13 +134,51 @@ struct label2fp* hash_labels(struct rt2label *r2l, const char *prefix, int MAX_L
 
 int main(int argc, char *argv[]) {
     // Test only
-    const char path[] = "/Users/ycc/Dropbox/My Mac (10-17-233-196.dynapool.wireless.nyu.edu)/Desktop/scbamsplit/data/test.txt";
+//    const char path[] = "/Users/ycc/Dropbox/My Mac (10-17-233-196.dynapool.wireless.nyu.edu)/Desktop/scbamsplit/data/test.txt";
+//    const char bampath[] = "/Users/ycc/Dropbox/My Mac (10-17-233-196.dynapool.wireless.nyu.edu)/Desktop/scbamsplit/data/test.bam";
+//    const char prefix[] = "test_";
+
+    // Commandline argument processing
+    printf("Running %s...\n", argv[0]);
+
+    if( argc == 4) {
+        printf(
+                "Processing bam: %s\nProcessing metadata: %s\nOutput prefix: %s\n", argv[1], argv[2], argv[3]
+                );
+    }
+    else if( argc > 3 ) {
+        printf("Too many arguments supplied.\n");
+    }
+    else {
+        printf("Three arguments expected.\n");
+    }
 
     // Main code
-    const char prefix[] = "test_";
+
+
+    ////////// bam related//////////////////////////////////////////////
+
+    // Open input bam file from CellRanger
+    // Remember to close file handle!
+//    samFile *fp = sam_open(bampath, "r");
+    samFile *fp = sam_open(argv[1], "r");
+
+    // Extract header
+    sam_hdr_t *header = sam_hdr_read(fp);
+
+    // Iterating variables
+    bam1_t *read = bam_init1();
+    int ret;
+
+    // Prepare output file
+    // Remember to close file handle!
+
+
+
+    ////////////////////////////////////////////////////////////////////////////////////////
 
     // Prepare a read-tag-to-label hash table from a metadata table
-    struct rt2label *r2l = rt_hash((char *) path, MAX_LINE_LENGTH);
+    struct rt2label *r2l = rt_hash((char *) argv[2], MAX_LINE_LENGTH);
 
     if (r2l == NULL) {
         printf("Failed to hash the metadata.\n");
@@ -144,33 +187,54 @@ int main(int argc, char *argv[]) {
 
     // Prepare a label-to-file-handle hash table from the above
     struct label2fp *l2fp = NULL;
-    l2fp = hash_labels(r2l, prefix, MAX_LINE_LENGTH);
+    l2fp = hash_labels(r2l, argv[3], MAX_LINE_LENGTH, header);
 
     // Iterate through the rt's and write to corresponding file handles.
-    struct rt2label *s, *tmp;
-    struct label2fp *fout;
-    HASH_ITER(hh, r2l, s, tmp) {
-        HASH_FIND_STR(l2fp, s->label, fout);
-        fprintf(fout->fp, "%s, %s\n", s->rt, s->label);
-    }
+    // Iterate through reads from input bam
 
+    struct rt2label *lout;
+    struct label2fp *fout;
+    while ((ret = sam_read1(fp, header, read)) >= 0) {
+        if (bam_aux_get(read, "CB") != NULL) {
+            // Extract corrected CBC from the read
+            unsigned char * cbc = bam_aux_get(read, "CB") + 1;
+
+            // Query read-tag-to-label table
+            HASH_FIND_STR(r2l, cbc, lout);
+
+            // If the read tag is legit
+            if (lout) {
+                // Query the read-tag-to-output table
+                HASH_FIND_STR(l2fp, lout->label, fout);
+                if (fout) {
+                    sam_write1(fout->fp, header, read);
+                }
+
+            }
+
+        }
+    }
 
     // Close file handles
     struct label2fp *qs, *qtmp;
     HASH_ITER(hh, l2fp, qs, qtmp) {
-//        fprintf(qs->fp, "label = %s", qs->label);
-        fclose(qs->fp);
+        sam_close(qs->fp);
 //        printf("label is %s\n", qs->label);
         HASH_DEL(l2fp, qs);
         free(qs);
     }
 
-
+    struct rt2label *s, *tmp;
     // free the hash table contents
     HASH_ITER(hh, r2l, s, tmp) {
         HASH_DEL(r2l, s);
         free(s);
     }
+
+    // Close opened bam files
+    bam_destroy1(read);
+    bam_hdr_destroy(header);
+    sam_close(fp);
 
 
     return 0;
