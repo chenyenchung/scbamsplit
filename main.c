@@ -4,7 +4,7 @@
 #include "uthash.h"
 #include "htslib/sam.h"
 
-const int MAX_LINE_LENGTH = 256;
+#define MAX_LINE_LENGTH 256;
 
 struct rt2label {
     char rt[MAX_LINE_LENGTH];             /* key (string is WITHIN the structure) */
@@ -18,7 +18,7 @@ struct label2fp {
     UT_hash_handle hh;         /* makes this structure hashable */
 };
 
-struct rt2label* rt_hash(char *path, const int MAX_LINE_LENGTH) {
+struct rt2label* rt_hash(char *path, const int max_length) {
     // Open meta data file
     FILE* meta_fp = fopen(path, "r");
 
@@ -32,9 +32,9 @@ struct rt2label* rt_hash(char *path, const int MAX_LINE_LENGTH) {
     struct rt2label *r2l = NULL;
 
     // Read every line
-    char meta_line[MAX_LINE_LENGTH]; // Temporary variable to store each line
+    char meta_line[max_length]; // Temporary variable to store each line
     int first_line = 1;
-    while (fgets(meta_line, MAX_LINE_LENGTH, meta_fp) != NULL) {
+    while (fgets(meta_line, max_length, meta_fp) != NULL) {
         // Assuming header and skip it
         if (first_line) {
             first_line--;
@@ -46,8 +46,8 @@ struct rt2label* rt_hash(char *path, const int MAX_LINE_LENGTH) {
         // Tokenize by comma
         char* tokens; // Temporary variable for iterating tokens
         int field_num = 0; // Counting numbers to examine if expected field numbers are present
-        char trt[MAX_LINE_LENGTH]; // Temporary variable for read tag content
-        char tlabel[MAX_LINE_LENGTH]; // Temporary variable for corresponding label content
+        char trt[max_length]; // Temporary variable for read tag content
+        char tlabel[max_length]; // Temporary variable for corresponding label content
         tokens = strtok(meta_line, ",");
 
         // Iterate through tokens
@@ -91,7 +91,7 @@ struct rt2label* rt_hash(char *path, const int MAX_LINE_LENGTH) {
     return r2l;
 }
 
-struct label2fp* hash_labels(struct rt2label *r2l, const char *prefix, int MAX_LINE_LENGTH, sam_hdr_t *header) {
+struct label2fp* hash_labels(struct rt2label *r2l, const char *prefix, int max_length, sam_hdr_t *header) {
     struct rt2label *s; // Declare a temporary variable to iterate over the rt2label table
     struct label2fp *l2f = NULL; // Initialize l2f to hold the label2fp table
     struct label2fp *tmp, *new_l2f; // Declare temporary variables for HASH_FIND_STR
@@ -113,7 +113,7 @@ struct label2fp* hash_labels(struct rt2label *r2l, const char *prefix, int MAX_L
         strcpy(new_l2f->label, s->label);
 
         // Prepare output file path
-        char outpath[MAX_LINE_LENGTH];
+        char outpath[max_length];
         strcpy(outpath, prefix);
         strcat(outpath, s->label);
         strcat(outpath, ".sam");
