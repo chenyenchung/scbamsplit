@@ -4,7 +4,7 @@
 #include "uthash.h"
 #include "htslib/sam.h"
 
-#define MAX_LINE_LENGTH 256;
+#define MAX_LINE_LENGTH 256
 
 struct rt2label {
     char rt[MAX_LINE_LENGTH];             /* key (string is WITHIN the structure) */
@@ -148,9 +148,11 @@ int main(int argc, char *argv[]) {
     }
     else if( argc > 3 ) {
         printf("Too many arguments supplied.\n");
+        return 1;
     }
     else {
         printf("Three arguments expected.\n");
+        return 1;
     }
 
     // Main code
