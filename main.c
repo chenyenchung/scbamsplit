@@ -116,11 +116,11 @@ struct label2fp* hash_labels(struct rt2label *r2l, const char *prefix, int max_l
         char outpath[max_length];
         strcpy(outpath, prefix);
         strcat(outpath, s->label);
-        strcat(outpath, ".sam");
+        strcat(outpath, ".bam");
 
         // Create file handle from the path generated above
         // These handles must be closed manually!
-        new_l2f->fp = sam_open(outpath, "w");
+        new_l2f->fp = sam_open(outpath, "wb");
 
         // Populate header
         sam_hdr_write(new_l2f->fp, header);
