@@ -61,7 +61,7 @@ int main(int argc, char *argv[]) {
     struct dedup *prev_reads = NULL, *find_reads;
     int ret;
     while ((ret = sam_read1(fp, header, read)) >= 0) {
-        if (bam_aux_get(read, "CB") != NULL) {
+        if (bam_aux_get(read, "CB") != NULL && bam_aux_get(read, "UB") != NULL) {
             // Extract corrected CBC from the read
             unsigned char * cbc = bam_aux_get(read, "CB") + 1;
             unsigned char * umi = bam_aux_get(read, "UB") + 1;
