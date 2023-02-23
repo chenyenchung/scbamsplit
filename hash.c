@@ -124,8 +124,6 @@ struct label2fp* hash_labels(struct rt2label *r2l, const char *prefix, sam_hdr_t
 struct dedup* hash_cbumi(struct dedup *dedup_t, char *id) {
     struct dedup *new_dedup_t;
 
-    printf("%s\n", id);
-
     new_dedup_t = (struct dedup *)malloc(sizeof *new_dedup_t);
     strcpy(new_dedup_t->id, id);
     HASH_ADD_STR(dedup_t, id, new_dedup_t);

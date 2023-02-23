@@ -8,6 +8,7 @@
 
 int main(int argc, char *argv[]) {
     int mapq = 30;
+    int dedup = 1;
 
     // Commandline argument processing
     printf("Running %s...\n", argv[0]);
@@ -55,17 +56,18 @@ int main(int argc, char *argv[]) {
 
     // Iterate through the rt's and write to corresponding file handles.
     // Iterate through reads from input bam
-
     struct rt2label *lout;
     struct label2fp *fout;
     struct dedup *prev_reads = NULL, *find_reads;
     int ret;
+
     while ((ret = sam_read1(fp, header, read)) >= 0) {
+        // Only deal with reads with both corrected CBCs and UMIs
+        // TODO: This would only be compatible with 10X Genomics platform
         if (bam_aux_get(read, "CB") != NULL && bam_aux_get(read, "UB") != NULL) {
             // Extract corrected CBC from the read
             unsigned char * cbc = bam_aux_get(read, "CB") + 1;
             unsigned char * umi = bam_aux_get(read, "UB") + 1;
-
 
             // Query read-tag-to-label table
             HASH_FIND_STR(r2l, (char *) cbc, lout);
@@ -76,16 +78,19 @@ int main(int argc, char *argv[]) {
                 HASH_FIND_STR(l2fp, lout->label, fout);
                 if (fout) {
                     if (read->core.qual >= mapq) {
-                        char id[MAX_LINE_LENGTH];
-                        strcpy(id, (char *) cbc);
-                        strcat(id, (char *) umi);
-                        HASH_FIND_STR(prev_reads, (char *) id, find_reads);
-                        if (find_reads) {
-                            // If the CBC + UMI combination was observed before
-                            // Just continue.
-                            continue;
+                        if (dedup) {
+                            // Construct an identifier = CB + UB
+                            char id[ID_LENGTH];
+                            strcpy(id, (char *) cbc);
+                            strcat(id, (char *) umi);
+                            HASH_FIND_STR(prev_reads, (char *) id, find_reads);
+                            if (find_reads) {
+                                // If the CBC + UMI combination was observed before
+                                // Just continue.
+                                continue;
+                            }
+                            hash_cbumi(prev_reads, id);
                         }
-                        hash_cbumi(prev_reads, id);
                         sam_write1(fout->fp, header, read);
                     }
                 }
@@ -103,17 +108,28 @@ int main(int argc, char *argv[]) {
         free(qs);
     }
 
-    struct rt2label *s, *tmp;
     // free the hash table contents
+    struct rt2label *s, *tmp;
     HASH_ITER(hh, r2l, s, tmp) {
         HASH_DEL(r2l, s);
         free(s);
     }
 
+    // Close CB-UMI hash table
+    if (dedup) {
+        struct dedup *ds, *dtmp;
+        HASH_ITER(hh, prev_reads, ds, dtmp) {
+            HASH_DEL(prev_reads, ds);
+            free(ds);
+        }
+    }
+
+
     // Close opened bam files
     bam_destroy1(read);
     bam_hdr_destroy(header);
     sam_close(fp);
+
 
 
     return 0;
