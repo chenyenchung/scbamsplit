@@ -7,6 +7,9 @@
 #include "shared_const.h" /* Defining shared constants */
 
 int main(int argc, char *argv[]) {
+    int mapq = 30;
+    int filter = 1;
+
     // Commandline argument processing
     printf("Running %s...\n", argv[0]);
 
@@ -70,6 +73,11 @@ int main(int argc, char *argv[]) {
                 // Query the read-tag-to-output table
                 HASH_FIND_STR(l2fp, lout->label, fout);
                 if (fout) {
+                    if (filter) {
+                        if (read->core.qual <= mapq) {
+                            continue;
+                        }
+                    }
                     sam_write1(fout->fp, header, read);
                 }
 
