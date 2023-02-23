@@ -1,143 +1,12 @@
 #include <string.h>  /* strcpy */
 #include <stdlib.h>  /* malloc */
 #include <stdio.h>   /* printf */
-#include "uthash.h"
-#include "htslib/sam.h"
-
-#define MAX_LINE_LENGTH 256
-
-struct rt2label {
-    char rt[MAX_LINE_LENGTH];             /* key (string is WITHIN the structure) */
-    char label[MAX_LINE_LENGTH];
-    UT_hash_handle hh;         /* makes this structure hashable */
-};
-
-struct label2fp {
-    char label[MAX_LINE_LENGTH];             /* key (string is WITHIN the structure) */
-    samFile* fp;
-    UT_hash_handle hh;         /* makes this structure hashable */
-};
-
-struct rt2label* rt_hash(char *path, const int max_length) {
-    // Open meta data file
-    FILE* meta_fp = fopen(path, "r");
-
-    if (meta_fp == NULL) {
-        // Exit and print error message if the file does not exist
-        printf("Error: Cannot open file %s.\n", path);
-        return NULL;
-    }
-
-    // Declare a read-tag-to-label hash table
-    struct rt2label *r2l = NULL;
-
-    // Read every line
-    char meta_line[max_length]; // Temporary variable to store each line
-    int first_line = 1;
-    while (fgets(meta_line, max_length, meta_fp) != NULL) {
-        // Assuming header and skip it
-        if (first_line) {
-            first_line--;
-            continue;
-        }
-        // Strip the linebreak
-        meta_line[strcspn(meta_line, "\n")] = 0;
-
-        // Tokenize by comma
-        char* tokens; // Temporary variable for iterating tokens
-        int field_num = 0; // Counting numbers to examine if expected field numbers are present
-        char trt[max_length]; // Temporary variable for read tag content
-        char tlabel[max_length]; // Temporary variable for corresponding label content
-        tokens = strtok(meta_line, ",");
-
-        // Iterate through tokens
-        while (tokens != NULL) {
-            switch(field_num) {
-                case 0:
-                    // Expect the first field to be read tags
-                    strcpy(trt, tokens);
-                    break;
-                case 1:
-                    // Expect the second to be labels
-                    strcpy(tlabel, tokens);
-                    break;
-                default:
-                    printf("Error: There are %d fields in the metadata. Expecting 2.\n", field_num);
-                    return NULL;
-
-            }
-            field_num ++;
-            tokens = strtok(NULL, ",");
-        }
-
-        // Deal with metadata that has < 2 fields
-        if (field_num < 2) {
-            printf("Error: There is only %d field in the metadata.", field_num);
-            return NULL;
-        }
-
-        // Prepare a new element for the hash table
-        struct rt2label *s;
-        // These hash tables must be freed through iteration!
-        s = (struct rt2label *)malloc(sizeof *s);
-
-        // Assign the read tag and label as a key-value pair
-        strcpy(s->rt, trt);
-        strcpy(s->label, tlabel);
-
-        HASH_ADD_STR(r2l, rt, s);
-    }
-    fclose(meta_fp);
-    return r2l;
-}
-
-struct label2fp* hash_labels(struct rt2label *r2l, const char *prefix, int max_length, sam_hdr_t *header) {
-    struct rt2label *s; // Declare a temporary variable to iterate over the rt2label table
-    struct label2fp *l2f = NULL; // Initialize l2f to hold the label2fp table
-    struct label2fp *tmp, *new_l2f; // Declare temporary variables for HASH_FIND_STR
-
-    // Loop over each element in the rt2label table
-    for (s = r2l; s != NULL; s = s->hh.next) {
-        HASH_FIND_STR(l2f, s->label, tmp);
-        // If a read tag-associated label already has a file handle
-        // Just move on
-        if (tmp) {
-            continue;
-        }
-
-        // If the label is new, malloc() for a new element
-        // These hash tables must be freed through iteration!
-        new_l2f = (struct label2fp *)malloc(sizeof *new_l2f);
-
-        // Populate the label (key) for the new element
-        strcpy(new_l2f->label, s->label);
-
-        // Prepare output file path
-        char outpath[max_length];
-        strcpy(outpath, prefix);
-        strcat(outpath, s->label);
-        strcat(outpath, ".bam");
-
-        // Create file handle from the path generated above
-        // These handles must be closed manually!
-        new_l2f->fp = sam_open(outpath, "wb");
-
-        // Populate header
-        sam_hdr_write(new_l2f->fp, header);
-
-        // Add the new element to the hash table
-        HASH_ADD_STR(l2f, label, new_l2f);
-    }
-    return l2f;
-}
-
+#include "htslib/sam.h" /* Use htslib to interact with bam files */
+#include "uthash.h"  /* hash table */
+#include "hash.h"    /* Defining the hash tables actually used */
+#include "shared_const.h" /* Defining shared constants */
 
 int main(int argc, char *argv[]) {
-    // Test only
-//    const char path[] = "/Users/ycc/Dropbox/My Mac (10-17-233-196.dynapool.wireless.nyu.edu)/Desktop/scbamsplit/data/test.txt";
-//    const char bampath[] = "/Users/ycc/Dropbox/My Mac (10-17-233-196.dynapool.wireless.nyu.edu)/Desktop/scbamsplit/data/test.bam";
-//    const char prefix[] = "test_";
-
     // Commandline argument processing
     printf("Running %s...\n", argv[0]);
 
@@ -154,7 +23,6 @@ int main(int argc, char *argv[]) {
         printf("Three arguments expected.\n");
         return 1;
     }
-
     // Main code
 
 
@@ -168,16 +36,8 @@ int main(int argc, char *argv[]) {
     // Extract header
     sam_hdr_t *header = sam_hdr_read(fp);
 
-    // Iterating variables
+    // Iterating variables for reads in the bam file
     bam1_t *read = bam_init1();
-    int ret;
-
-    // Prepare output file
-    // Remember to close file handle!
-
-
-
-    ////////////////////////////////////////////////////////////////////////////////////////
 
     // Prepare a read-tag-to-label hash table from a metadata table
     struct rt2label *r2l = rt_hash((char *) argv[2], MAX_LINE_LENGTH);
@@ -196,13 +56,14 @@ int main(int argc, char *argv[]) {
 
     struct rt2label *lout;
     struct label2fp *fout;
+    int ret;
     while ((ret = sam_read1(fp, header, read)) >= 0) {
         if (bam_aux_get(read, "CB") != NULL) {
             // Extract corrected CBC from the read
             unsigned char * cbc = bam_aux_get(read, "CB") + 1;
 
             // Query read-tag-to-label table
-            HASH_FIND_STR(r2l, cbc, lout);
+            HASH_FIND_STR(r2l, (char *) cbc, lout);
 
             // If the read tag is legit
             if (lout) {
