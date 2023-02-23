@@ -8,7 +8,6 @@
 
 int main(int argc, char *argv[]) {
     int mapq = 30;
-    int filter = 1;
 
     // Commandline argument processing
     printf("Running %s...\n", argv[0]);
@@ -43,7 +42,7 @@ int main(int argc, char *argv[]) {
     bam1_t *read = bam_init1();
 
     // Prepare a read-tag-to-label hash table from a metadata table
-    struct rt2label *r2l = rt_hash((char *) argv[2], MAX_LINE_LENGTH);
+    struct rt2label *r2l = hash_readtag((char *) argv[2]);
 
     if (r2l == NULL) {
         printf("Failed to hash the metadata.\n");
@@ -52,18 +51,21 @@ int main(int argc, char *argv[]) {
 
     // Prepare a label-to-file-handle hash table from the above
     struct label2fp *l2fp = NULL;
-    l2fp = hash_labels(r2l, argv[3], MAX_LINE_LENGTH, header);
+    l2fp = hash_labels(r2l, argv[3], header);
 
     // Iterate through the rt's and write to corresponding file handles.
     // Iterate through reads from input bam
 
     struct rt2label *lout;
     struct label2fp *fout;
+    struct dedup *prev_reads = NULL, *find_reads;
     int ret;
     while ((ret = sam_read1(fp, header, read)) >= 0) {
         if (bam_aux_get(read, "CB") != NULL) {
             // Extract corrected CBC from the read
             unsigned char * cbc = bam_aux_get(read, "CB") + 1;
+            unsigned char * umi = bam_aux_get(read, "UB") + 1;
+
 
             // Query read-tag-to-label table
             HASH_FIND_STR(r2l, (char *) cbc, lout);
@@ -73,14 +75,20 @@ int main(int argc, char *argv[]) {
                 // Query the read-tag-to-output table
                 HASH_FIND_STR(l2fp, lout->label, fout);
                 if (fout) {
-                    if (filter) {
-                        if (read->core.qual <= mapq) {
+                    if (read->core.qual >= mapq) {
+                        char id[MAX_LINE_LENGTH];
+                        strcpy(id, (char *) cbc);
+                        strcat(id, (char *) umi);
+                        HASH_FIND_STR(prev_reads, (char *) id, find_reads);
+                        if (find_reads) {
+                            // If the CBC + UMI combination was observed before
+                            // Just continue.
                             continue;
                         }
+                        hash_cbumi(prev_reads, id);
+                        sam_write1(fout->fp, header, read);
                     }
-                    sam_write1(fout->fp, header, read);
                 }
-
             }
 
         }

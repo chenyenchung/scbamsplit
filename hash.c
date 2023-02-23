@@ -8,7 +8,7 @@
 #include "uthash.h"
 #include "shared_const.h"
 #include "hash.h"
-struct rt2label* rt_hash(char *path, const int max_length) {
+struct rt2label* hash_readtag(char *path) {
     // Open meta data file
     FILE* meta_fp = fopen(path, "r");
 
@@ -22,9 +22,9 @@ struct rt2label* rt_hash(char *path, const int max_length) {
     struct rt2label *r2l = NULL;
 
     // Read every line
-    char meta_line[max_length]; // Temporary variable to store each line
+    char meta_line[MAX_LINE_LENGTH]; // Temporary variable to store each line
     int first_line = 1;
-    while (fgets(meta_line, max_length, meta_fp) != NULL) {
+    while (fgets(meta_line, MAX_LINE_LENGTH, meta_fp) != NULL) {
         // Assuming header and skip it
         if (first_line) {
             first_line--;
@@ -36,8 +36,8 @@ struct rt2label* rt_hash(char *path, const int max_length) {
         // Tokenize by comma
         char* tokens; // Temporary variable for iterating tokens
         int field_num = 0; // Counting numbers to examine if expected field numbers are present
-        char trt[max_length]; // Temporary variable for read tag content
-        char tlabel[max_length]; // Temporary variable for corresponding label content
+        char trt[MAX_LINE_LENGTH]; // Temporary variable for read tag content
+        char tlabel[MAX_LINE_LENGTH]; // Temporary variable for corresponding label content
         tokens = strtok(meta_line, ",");
 
         // Iterate through tokens
@@ -81,7 +81,7 @@ struct rt2label* rt_hash(char *path, const int max_length) {
     return r2l;
 }
 
-struct label2fp* hash_labels(struct rt2label *r2l, const char *prefix, int max_length, sam_hdr_t *header) {
+struct label2fp* hash_labels(struct rt2label *r2l, const char *prefix, sam_hdr_t *header) {
     struct rt2label *s; // Declare a temporary variable to iterate over the rt2label table
     struct label2fp *l2f = NULL; // Initialize l2f to hold the label2fp table
     struct label2fp *tmp, *new_l2f; // Declare temporary variables for HASH_FIND_STR
@@ -103,7 +103,7 @@ struct label2fp* hash_labels(struct rt2label *r2l, const char *prefix, int max_l
         strcpy(new_l2f->label, s->label);
 
         // Prepare output file path
-        char outpath[max_length];
+        char outpath[MAX_LINE_LENGTH];
         strcpy(outpath, prefix);
         strcat(outpath, s->label);
         strcat(outpath, ".bam");
@@ -119,4 +119,15 @@ struct label2fp* hash_labels(struct rt2label *r2l, const char *prefix, int max_l
         HASH_ADD_STR(l2f, label, new_l2f);
     }
     return l2f;
+}
+
+struct dedup* hash_cbumi(struct dedup *dedup_t, char *id) {
+    struct dedup *new_dedup_t;
+
+    printf("%s\n", id);
+
+    new_dedup_t = (struct dedup *)malloc(sizeof *new_dedup_t);
+    strcpy(new_dedup_t->id, id);
+    HASH_ADD_STR(dedup_t, id, new_dedup_t);
+    return dedup_t;
 }
