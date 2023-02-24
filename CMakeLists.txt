@@ -161,6 +161,6 @@ message(STATUS "   HTSlib libraries: ${HTSlib_LIBRARIES}")
 
 #########
 # add extra include directories
-add_executable(scbamsplit main.c hash.c)
+add_executable(scbamsplit main.c hash.c utils.c utils.h)
 target_include_directories(scbamsplit PUBLIC ${HTSlib_INCLUDE_DIRS})
 target_link_libraries(scbamsplit ${HTSlib_LIBRARIES})
