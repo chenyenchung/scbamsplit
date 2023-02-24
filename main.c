@@ -13,7 +13,7 @@ int main(int argc, char *argv[]) {
     // Commandline argument processing
     printf("Running %s...\n", argv[0]);
 
-    if( argc == 4) {
+    if(argc == 4) {
         printf(
                 "Processing bam: %s\nProcessing metadata: %s\nOutput prefix: %s\n", argv[1], argv[2], argv[3]
                 );
@@ -89,7 +89,7 @@ int main(int argc, char *argv[]) {
                                 // Just continue.
                                 continue;
                             }
-                            hash_cbumi(prev_reads, id);
+                            prev_reads = hash_cbumi(prev_reads, id);
                         }
                         sam_write1(fout->fp, header, read);
                     }
