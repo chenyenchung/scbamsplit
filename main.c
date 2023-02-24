@@ -93,6 +93,11 @@ int main(int argc, char *argv[]) {
        return 1;
     }
 
+    // If there's no output prefix set, export files in the work directory
+    if (oprefix == NULL) {
+        oprefix = "./";
+    }
+
     if (verbose || dryrun) {
         fprintf(stderr, "- Run condition:\n\n");
         fprintf(stderr, "\tInput bam: %s\n", bampath);
