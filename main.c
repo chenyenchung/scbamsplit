@@ -152,41 +152,48 @@ int main(int argc, char *argv[]) {
     int ret;
 
     while ((ret = sam_read1(fp, header, read)) >= 0) {
-        // Only deal with reads with both corrected CBCs and UMIs
-        // TODO: This would only be compatible with 10X Genomics platform
-        if (bam_aux_get(read, "CB") != NULL && bam_aux_get(read, "UB") != NULL) {
-            // Extract corrected CBC from the read
-            unsigned char * cbc = bam_aux_get(read, filter_tag) + 1;
-            unsigned char * umi = bam_aux_get(read, umi_tag) + 1;
+        // Only deal with reads with both corrected CBCs (and UMIs if dedup is on)
+        // Extract corrected CBC from the read
+        if (bam_aux_get(read, filter_tag) == NULL) {
+            // If a read has no CBC, just continue.
+            continue;
+        }
 
-            // Query read-tag-to-label table
-            HASH_FIND_STR(r2l, (char *) cbc, lout);
+        if (dedup && bam_aux_get(read, umi_tag) == NULL) {
+            // If UMI is needed for dedup, ignore the reads without it.
+            continue;
+        }
 
-            // If the read tag is legit
-            if (lout) {
-                // Query the read-tag-to-output table
-                HASH_FIND_STR(l2fp, lout->label, fout);
-                if (fout) {
-                    if (read->core.qual >= mapq) {
-                        if (dedup) {
-                            // Construct an identifier = CB + UB
-                            char id[ID_LENGTH];
-                            strcpy(id, (char *) cbc);
-                            strcat(id, (char *) umi);
-                            HASH_FIND_STR(prev_reads, (char *) id, find_reads);
-                            if (find_reads) {
-                                // If the CBC + UMI combination was observed before
-                                // Just continue.
-                                continue;
-                            }
-                            prev_reads = hash_cbumi(prev_reads, id);
+        unsigned char * cbc = bam_aux_get(read, filter_tag) + 1;
+
+        // Query read-tag-to-label table
+        HASH_FIND_STR(r2l, (char *) cbc, lout);
+
+        // If the read tag is legit
+        if (lout) {
+            // Query the read-tag-to-output table
+            HASH_FIND_STR(l2fp, lout->label, fout);
+            if (fout) {
+                if (read->core.qual >= mapq) {
+                    if (dedup) {
+                        // Construct an identifier = CB + UB
+                        unsigned char * umi = bam_aux_get(read, umi_tag) + 1;
+                        char id[ID_LENGTH];
+                        strcpy(id, (char *) cbc);
+                        strcat(id, (char *) umi);
+                        HASH_FIND_STR(prev_reads, (char *) id, find_reads);
+                        if (find_reads) {
+                            // If the CBC + UMI combination was observed before
+                            // Just continue.
+                            continue;
                         }
-                        sam_write1(fout->fp, header, read);
+                        prev_reads = hash_cbumi(prev_reads, id);
                     }
+                    sam_write1(fout->fp, header, read);
                 }
             }
-
         }
+
     }
 
     // Close file handles

@@ -7,5 +7,5 @@
 #define MAX_LINE_LENGTH 256
 #define ID_LENGTH 32
 #define APP_NAME "scbamsplit"
-#define VERSION "v0.00"
+#define VERSION "v0.10"
 #endif //SCBAMSPLIT_SHARED_CONST_H
