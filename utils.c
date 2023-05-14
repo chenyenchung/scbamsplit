@@ -20,6 +20,7 @@ int show_usage(const char* type) {
     fprintf(stderr, "Usage: scbamsplit [-f path] [-m path] [-o path] [-q MAPQ] [-t read-tag] [-u read-tag] [-d] [-h] [-n] [-v] \n\n");
     fprintf(stderr, "\t-f/--file: the path for input bam file\n");
     fprintf(stderr, "\t-m/--meta: the path for input metadata (an unquoted two-column csv with column names)\n");
+    fprintf(stderr, "\t-o/--output: the path to export bam files to (default: ./)\n");
     fprintf(stderr, "\t-q/--mapq: Minimal MAPQ threshold for output (default: 0)\n");
     fprintf(stderr, "\t-t/--filter-tag: The read tag you want to filter against (default: CB)\n");
     fprintf(stderr, "\t-u/--umi-tag: The read tag containing UMIs (default: UB)\n");
