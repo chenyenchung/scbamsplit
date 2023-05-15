@@ -84,8 +84,8 @@ invoke it anywhere as a command.
 
 `scbamsplit` requires:
 
-1. a BAM file with reads that are marked by read tags (-f/--file)
-2. a comma-separated file (.csv) in which the first column is the value of the tag to filtered
+1. A BAM file with reads that are marked by read tags (-f/--file)
+2. A comma-separated file (.csv) in which the first column is the value of the tag to filtered
 while the second is the subset identity (e.g., cluster, sample...). `scbamsplit` will generate a BAM file
 for each identity and export reads that contains a tag that belongs to this identity in the file.
 3. An output directory (-o/--output) to put the exported BAM files.
