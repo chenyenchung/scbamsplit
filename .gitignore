@@ -1,2 +1,3 @@
 cmake-build-debug/*
 *.bam
+.DS_Store
