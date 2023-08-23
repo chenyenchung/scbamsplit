@@ -2,11 +2,11 @@
 #include <stdlib.h>  /* malloc */
 #include <stdio.h>   /* printf */
 #include <getopt.h>  /* getopt */
-#include <stdbool.h>
+#include <stdbool.h> /* Define boolean type */
 #include "htslib/sam.h" /* Use htslib to interact with bam files */
 #include "uthash.h"  /* hash table */
 #include "hash.h"    /* Defining the hash tables actually used */
-#include "utils.h"
+#include "utils.h" /* Show help and create output dir */
 #include "shared_const.h" /* Defining shared constants */
 
 int main(int argc, char *argv[]) {
@@ -98,6 +98,12 @@ int main(int argc, char *argv[]) {
         oprefix = "./";
     }
 
+    // If the output prefix does not end with /, add it.
+    int oplen = strlen(oprefix) - 1;
+    if (oprefix[oplen] != '/')
+        oprefix = strcat(oprefix, "/");
+
+
     if (verbose || dryrun) {
         fprintf(stderr, "- Run condition:\n\n");
         fprintf(stderr, "\tInput bam: %s\n", bampath);
@@ -120,7 +126,11 @@ int main(int argc, char *argv[]) {
         return 0;
     }
 
-    ////////// bam related//////////////////////////////////////////////
+    // Create output folder if it does not exist
+    // If it exists, ask the user for confirmation to prevent unexpected overwriting
+    if (create_folder(oprefix) != 0) return 1;
+
+    ////////// bam related //////////////////////////////////////////////
 
     // Open input bam file from CellRanger
     // Remember to close file handle!

@@ -3,9 +3,11 @@
 //
 #include <stdio.h>
 #include <string.h>
+#include <ctype.h> /* For tolower() */
 #include "utils.h"
 #include "htslib/sam.h"
-#include "shared_const.h"
+#include "shared_const.h" /* For shared constants */
+#include "sys/stat.h" /* stat() and mkdir() */
 
 int show_usage(const char* type) {
     if (strcmp(type, "unknown") == 0) {
@@ -29,4 +31,45 @@ int show_usage(const char* type) {
     fprintf(stderr, "\t-v/--verbose: Print out parameters\n");
     fprintf(stderr, "\t-h/--help: Show this documentation\n");
     return 0;
+}
+
+int create_folder(char* pathname) {
+   struct stat st = {0};
+
+   // stat() returns 0 on success and -1 on failure
+   // and put the file information into a statbuf
+   if (stat(pathname, &st)) {
+       mkdir(pathname, 0700);
+   } else {
+       fprintf(stderr, "\n\nPlease note that output directory (%s) already exists.\n", pathname);
+       char overwrite[3];
+       char answer;
+
+       int checking;
+       checking = 1;
+       while (checking == 1) {
+           fprintf(stderr, "Are you sure you want to save results and potentially OVERWRITE files there? [y/n]: ");
+           fgets(overwrite, sizeof(overwrite), stdin);
+
+           // Clear the standard input to allow for the next round of input
+           fflush(stdin);
+           sscanf(overwrite, "%c\n", &answer);
+
+           answer = tolower(answer);
+
+           if (answer == 'n') {
+               checking = 0;
+               return 1;
+           }
+
+           if (answer != 'y'){
+               fprintf(stderr, "Please only answer yes or no.\n");
+           } else {
+               checking = 0;
+           }
+       }
+
+       }
+
+   return 0;
 }
