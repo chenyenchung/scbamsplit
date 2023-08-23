@@ -199,7 +199,11 @@ int main(int argc, char *argv[]) {
                         }
                         prev_reads = hash_cbumi(prev_reads, id);
                     }
-                    sam_write1(fout->fp, header, read);
+                    int write_to_bam;
+                    write_to_bam = sam_write1(fout->fp, header, read);
+                    if (write_to_bam < 0) {
+                        fprintf(stderr, "[LOUT] Fail to write bam file.");
+                    }
                 }
             }
         }
