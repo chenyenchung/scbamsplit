@@ -8,6 +8,8 @@
 #include "htslib/sam.h"
 #include "shared_const.h" /* For shared constants */
 #include "sys/stat.h" /* stat() and mkdir() */
+#include <time.h>
+#include <stdarg.h>
 
 int show_usage(const char* type) {
     if (strcmp(type, "unknown") == 0) {
@@ -73,3 +75,70 @@ int create_folder(char* pathname) {
 
    return 0;
 }
+
+char * get_time() {
+    /**
+     * Need to be freed!
+     */
+    time_t unixtime = time(NULL);
+    struct tm *timeobj = localtime(&unixtime);
+
+    // Expecting YYYY-MM-DD HH:MM:SS
+    char *timestamp;
+    timestamp = malloc(20 * sizeof(char));
+    char fmt_str[8] = "";
+
+    // Get year
+    sprintf(fmt_str, "%d-", timeobj->tm_year + 1900);
+    strcpy(timestamp, fmt_str);
+    sprintf(fmt_str, "%02d-",timeobj->tm_mon + 1);
+    strcat(timestamp, fmt_str);
+    sprintf(fmt_str, "%02d ",timeobj->tm_mday);
+    strcat(timestamp, fmt_str);
+    sprintf(fmt_str, "%02d:",timeobj->tm_hour);
+    strcat(timestamp, fmt_str);
+    sprintf(fmt_str, "%02d:",timeobj->tm_min);
+    strcat(timestamp, fmt_str);
+    sprintf(fmt_str, "%02d",timeobj->tm_sec);
+    strcat(timestamp, fmt_str);
+
+    return timestamp;
+}
+
+void log_message(char* message, log_level level, char* log_path, log_level out_level, ...) {
+    va_list args;
+    va_start(args, out_level);
+
+    FILE *logf;
+    char *level_flag[] = {"[ERROR  ]", "[WARNING]", "", "[INFO   ]", "", "[DEBUG  ]"};
+    if (strcmp("", log_path) != 0) {
+        logf = fopen(log_path, "a");
+    } else {
+        logf = stderr;
+    }
+
+    // Only log when the level is met
+    if (level > out_level) {return;}
+
+    char * timestamp = get_time();
+
+    // Tag the message
+    fprintf(logf, "%s", level_flag[level]);
+
+    // Timestamp the message
+    fprintf(logf, " | ");
+    fprintf(logf, timestamp);
+    free(timestamp);
+
+    // Print the message
+    fprintf(logf, " | ");
+    vfprintf(logf, message, args);
+    va_end(args);
+    fprintf(logf, "\n");
+
+    if (strcmp("", log_path) != 0) {
+        fclose(logf);
+    }
+}
+
+

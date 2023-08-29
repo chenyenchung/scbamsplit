@@ -8,4 +8,6 @@
 #define ID_LENGTH 32
 #define APP_NAME "scbamsplit"
 #define VERSION "v0.10"
+#define OUT_LEVEL DEBUG
+
 #endif //SCBAMSPLIT_SHARED_CONST_H
