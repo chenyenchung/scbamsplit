@@ -10,6 +10,9 @@
 #include "shared_const.h" /* Defining shared constants */
 #include "sort.h"
 
+char *out_path = "";
+log_level_t out_level = DEBUG;
+
 int main(int argc, char *argv[]) {
 
     // Use a flag to bypass commandline input during development
@@ -24,7 +27,6 @@ int main(int argc, char *argv[]) {
     char *oprefix = NULL;
     char filter_tag[3] = "CB";
     char umi_tag[3] = "UB";
-    char* logpath = "";
 
     // Commandline argument processing
     static struct option cl_opts[] = {
@@ -40,7 +42,7 @@ int main(int argc, char *argv[]) {
             {"help", no_argument, NULL, 'h'}
     };
 
-    log_message("Parsing commandline flags", DEBUG, logpath, OUT_LEVEL);
+    log_message("Parsing commandline flags", DEBUG, out_path, out_level);
 
 
     while ((opt = getopt_long(argc, argv, ":dq:f:m:o:t:u:nvh", cl_opts, NULL)) != -1) {
@@ -98,8 +100,8 @@ int main(int argc, char *argv[]) {
         log_message(
                 "Dev mode on: Bypassing command line input",
                 DEBUG,
-                logpath,
-                OUT_LEVEL
+                out_path,
+                out_level
                 );
         bampath = "../data/test.bam";
         metapath = "../data/test.txt";
@@ -111,8 +113,8 @@ int main(int argc, char *argv[]) {
         log_message(
                 "Error: Missing required arguments",
                 ERROR,
-                logpath,
-                OUT_LEVEL
+                out_path,
+                out_level
         );
         show_usage("regular");
         return 1;
@@ -155,44 +157,61 @@ int main(int argc, char *argv[]) {
 
     // Create output folder if it does not exist
     // If it exists, ask the user for confirmation to prevent unexpected overwriting
-    log_message("Creating output directory", INFO, logpath, OUT_LEVEL);
-    if (create_folder(oprefix) != 0) return 1;
+    log_message("Creating output directory", INFO, out_path, out_level);
+    int mkdir_status;
+    if (1 == (mkdir_status = create_directory(oprefix))) {
+        log_message(
+                "Exiting because the user declined overwrite",
+                INFO,
+                out_path,
+                out_level
+                );
+        log_message(
+                "Please provide a new path for the output directory",
+                WARNING,
+                out_path,
+                out_level
+                );
+        return 0;
+    } else if (-1 == mkdir_status) {
+        return 1;
+    };
 
 
     ////////// bam related //////////////////////////////////////////////
     // Open input bam file from CellRanger
     // Remember to close file handle!
-    log_message("Reading input BAM file: %s", INFO, logpath, OUT_LEVEL, bampath);
+    log_message("Reading input BAM file: %s", INFO, out_path, out_level, bampath);
     samFile *fp = sam_open(bampath, "r");
 
 
     // Extract header
-    log_message("Reading SAM header", DEBUG, logpath, OUT_LEVEL);
+    log_message("Reading SAM header", DEBUG, out_path, out_level);
     sam_hdr_t *header = sam_hdr_read(fp);
 
     // Iterating variables for reads in the bam file
-    log_message("Create temporary read", DEBUG, logpath, OUT_LEVEL);
+    log_message("Create temporary read", DEBUG, out_path, out_level);
     bam1_t *read = bam_init1();
 
     // Prepare a read-tag-to-label hash table from a metadata table
     log_message(
             "Loading barcode-cluster information from metadata: %s",
-            INFO, logpath, OUT_LEVEL,
+            INFO, out_path, out_level,
             metapath
             );
     struct rt2label *r2l = hash_readtag((char *) metapath);
 
     if (r2l == NULL) {
-        log_message("Failed to hash the metadata.", ERROR, logpath, OUT_LEVEL);
+        log_message("Failed to hash the metadata.", ERROR, out_path, out_level);
         return 1;
     }
 
     // Prepare a label-to-file-handle hash table from the above
-    log_message("Preparing output BAM files", INFO, logpath, OUT_LEVEL);
+    log_message("Preparing output BAM files", INFO, out_path, out_level);
     struct label2fp *l2fp = NULL;
     l2fp = hash_labels(r2l, oprefix, header);
 
-    log_message("Starting to split files", INFO, logpath, OUT_LEVEL);
+    log_message("Starting to split files", INFO, out_path, out_level);
     // Iterate through the rt's and write to corresponding file handles.
     // Iterate through reads from input bam
     struct rt2label *lout;
@@ -202,15 +221,15 @@ int main(int argc, char *argv[]) {
 
 
     int64_t chunk_size = 1000000;
-    log_message("Processing %lld reads per batch", INFO, logpath, OUT_LEVEL, chunk_size);
+    log_message("Processing %lld reads per batch", INFO, out_path, out_level, chunk_size);
 
     // Allocate heap memory for reads to sort
-    log_message("Preparing read chunks for sorting", DEBUG, logpath, OUT_LEVEL);
+    log_message("Preparing read chunks for sorting", DEBUG, out_path, out_level);
     sam_read *chunk;
     chunk = malloc(sizeof(sam_read) * chunk_size);
     if (chunk == NULL) {
         log_message("Insufficient memory. Please decrease chunk size used (%d)",
-                    ERROR, logpath, OUT_LEVEL, chunk_size);
+                    ERROR, out_path, out_level, chunk_size);
         return -1;
     }
 
@@ -224,11 +243,11 @@ int main(int argc, char *argv[]) {
 
     while (size_retrieved == chunk_size) {
         chunk_num += 1;
-        log_message("Chunk #%lld filling", DEBUG, logpath, OUT_LEVEL, chunk_num);
+        log_message("Chunk #%lld filling", DEBUG, out_path, out_level, chunk_num);
         size_retrieved = fill_chunk(fp, header, chunk, chunk_size);
         if (size_retrieved < -1) {
             log_message("Insufficient RN size (%d). Please increase RN size to at least %d",
-                        ERROR, logpath, OUT_LEVEL, RN_SIZE, -size_retrieved + 1);
+                        ERROR, out_path, out_level, RN_SIZE, -size_retrieved + 1);
             return 1;
         }
         sort_chunk(chunk, size_retrieved);
@@ -249,7 +268,7 @@ int main(int argc, char *argv[]) {
         if (write_status != 0) {
             log_message(
                     "Fail to write SAM header into temporary files",
-                    ERROR, logpath, OUT_LEVEL
+                    ERROR, out_path, out_level
                     );
             return 1;
         }
@@ -260,7 +279,7 @@ int main(int argc, char *argv[]) {
             if (write_to_bam == -1) {
                 log_message(
                         "Fail to write sorted reads into temporary files",
-                        ERROR, logpath, OUT_LEVEL
+                        ERROR, out_path, out_level
                 );
                 return 1;
             }

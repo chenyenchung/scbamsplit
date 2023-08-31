@@ -10,6 +10,7 @@
 #include "sys/stat.h" /* stat() and mkdir() */
 #include <time.h>
 #include <stdarg.h>
+#include <errno.h>
 
 int show_usage(const char* type) {
     if (strcmp(type, "unknown") == 0) {
@@ -33,57 +34,6 @@ int show_usage(const char* type) {
     fprintf(stderr, "\t-v/--verbose: Print out parameters\n");
     fprintf(stderr, "\t-h/--help: Show this documentation\n");
     return 0;
-}
-
-int create_folder(char* pathname) {
-   struct stat st = {0};
-
-   // stat() returns 0 on success and -1 on failure
-   // and put the file information into a statbuf
-   if (stat(pathname, &st)) {
-       mkdir(pathname, 0700);
-   } else {
-       fprintf(stderr, "\n\nPlease note that output directory (%s) already exists.\n", pathname);
-
-       int checking;
-       checking = 1;
-       while (checking == 1) {
-           fprintf(stderr, "Are you sure you want to save results and potentially OVERWRITE files there? [y/n]: ");
-           unsigned char answer = (unsigned char) getc(stdin);
-
-
-
-           // Clear the standard input to allow for the next round of input
-           fflush(stdin);
-           answer = tolower(answer);
-
-           if (answer == 'n') {
-               checking = 0;
-               return 1;
-           }
-
-
-           if (answer != 'y'){
-               fprintf(stderr, "Please only answer yes or no.\n");
-           } else {
-               checking = 0;
-           }
-       }
-
-       }
-   return 0;
-}
-
-char* create_tempdir(char *dir) {
-    char *tdir; // Name of temporary dir
-    tdir = malloc(sizeof(char) * (strlen(dir) + 5));
-    strcpy(tdir, dir);
-    strcat(tdir, "/tmp");
-    struct stat st = {0};
-    if (stat(tdir, &st) == -1) {
-        mkdir(tdir, 0700);
-    }
-    return tdir;
 }
 
 char * get_time() {
@@ -115,14 +65,14 @@ char * get_time() {
     return timestamp;
 }
 
-void log_message(char* message, log_level level, char* log_path, log_level out_level, ...) {
+void log_message(char* message, log_level_t level, char* log_path, log_level_t out_level, ...) {
     va_list args;
     va_start(args, out_level);
 
     FILE *logf;
     char *level_flag[] = {"[ERROR  ]", "[WARNING]", "", "[INFO   ]", "", "[DEBUG  ]"};
-    if (strcmp("", log_path) != 0) {
-        logf = fopen(log_path, "a");
+    if (strcmp("", out_path) != 0) {
+        logf = fopen(out_path, "a");
     } else {
         logf = stderr;
     }
@@ -146,9 +96,78 @@ void log_message(char* message, log_level level, char* log_path, log_level out_l
     va_end(args);
     fprintf(logf, "\n");
 
-    if (strcmp("", log_path) != 0) {
+    if (strcmp("", out_path) != 0) {
         fclose(logf);
     }
 }
 
+
+int create_directory(char* pathname) {
+    /**
+     * @abstract Create a sustained directory. If a directory already exists, prompt the user for
+     * confirmation.
+     * @pathname A string containing relative path from the present working directory
+     * @returns 0 on success, 1 if the user prompts NOT to overwrite, -1 if an error is encountered.
+     */
+   struct stat st = {0};
+
+   // stat() returns 0 on success and -1 on failure
+   // and put the file information into a statbuf
+   if (stat(pathname, &st)) {
+       int mkdir_stat = mkdir(pathname, 0700);
+       if (0 != mkdir_stat) {
+           int err_code = errno;
+           log_message(
+                   "Fail to create directory (Error: %s)",
+                   ERROR,
+                   out_path,
+                   out_level,
+                   strerror(err_code)
+                   );
+           return -1;
+       }
+   } else {
+       log_message("Please note that output directory (%s) already exists.\n",
+               WARNING, out_path, out_level, pathname);
+
+       int checking;
+       checking = 1;
+       while (checking == 1) {
+           fprintf(stderr, "Are you sure you want to save results and potentially OVERWRITE files there? [y/n]: ");
+           unsigned char answer = (unsigned char) getc(stdin);
+
+
+
+           // Clear the standard input to allow for the next round of input
+           fflush(stdin);
+           answer = tolower(answer);
+
+           if (answer == 'n') {
+               checking = 0;
+               return 1;
+           }
+
+
+           if (answer != 'y'){
+               fprintf(stderr, "Please only answer yes or no.\n");
+           } else {
+               checking = 0;
+           }
+       }
+
+       }
+   return 1;
+}
+
+char* create_tempdir(char *basedir) {
+    char *tdir; // Name of temporary dir
+    tdir = malloc(sizeof(char) * (strlen(basedir) + 5));
+    strcpy(tdir, basedir);
+    strcat(tdir, "/tmp");
+    struct stat st = {0};
+    if (stat(tdir, &st) == -1) {
+        mkdir(tdir, 0700);
+    }
+    return tdir;
+}
 

@@ -5,14 +5,20 @@
 #ifndef SCBAMSPLIT_UTILS_H
 #define SCBAMSPLIT_UTILS_H
 int show_usage(const char* type);
-int create_folder(char* pathname);
+int create_directory(char* pathname);
 char * create_tempdir(char *dir);
+
+// Logging utilities
 typedef enum {
     DEBUG = 5,
     ERROR = 0,
     WARNING = 1,
     INFO = 3
-} log_level;
+} log_level_t;
 
-void log_message(char* message, log_level level, char* log_path, log_level out_level, ...);
+extern log_level_t out_level;
+extern char *out_path;
+
+
+void log_message(char* message, log_level_t level, char* log_path, log_level_t out_level, ...);
 #endif //SCBAMSPLIT_UTILS_H
