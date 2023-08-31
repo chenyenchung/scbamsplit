@@ -20,6 +20,7 @@ int main(int argc, char *argv[]) {
     char *oprefix = NULL;
     char filter_tag[3] = "CB";
     char umi_tag[3] = "UB";
+    char* logpath = "";
 
     // Commandline argument processing
     static struct option cl_opts[] = {
@@ -34,6 +35,8 @@ int main(int argc, char *argv[]) {
             {"verbose", no_argument, NULL, 'v'},
             {"help", no_argument, NULL, 'h'}
     };
+
+    log_message("Parsing commandline flags", DEBUG, logpath, OUT_LEVEL);
 
 
     while ((opt = getopt_long(argc, argv, ":dq:f:m:o:t:u:nvh", cl_opts, NULL)) != -1) {
@@ -88,9 +91,14 @@ int main(int argc, char *argv[]) {
 
     // Error-out if missing arguments
     if (bampath == NULL || metapath == NULL) {
-       fprintf(stderr, "Error: Missing required arguments.\n\n");
-       show_usage("regular");
-       return 1;
+        log_message(
+                "Error: Missing required arguments",
+                ERROR,
+                logpath,
+                OUT_LEVEL
+        );
+        show_usage("regular");
+        return 1;
     }
 
     // If there's no output prefix set, export files in the work directory
@@ -128,32 +136,44 @@ int main(int argc, char *argv[]) {
 
     // Create output folder if it does not exist
     // If it exists, ask the user for confirmation to prevent unexpected overwriting
+    log_message("Creating output directory", INFO, logpath, OUT_LEVEL);
     if (create_folder(oprefix) != 0) return 1;
 
-    ////////// bam related //////////////////////////////////////////////
 
+    ////////// bam related //////////////////////////////////////////////
     // Open input bam file from CellRanger
     // Remember to close file handle!
+    log_message("Reading input BAM file: %s", INFO, logpath, OUT_LEVEL, bampath);
     samFile *fp = sam_open(bampath, "r");
 
+
     // Extract header
+    log_message("Reading SAM header", DEBUG, logpath, OUT_LEVEL);
     sam_hdr_t *header = sam_hdr_read(fp);
 
     // Iterating variables for reads in the bam file
+    log_message("Create temporary read", DEBUG, logpath, OUT_LEVEL);
     bam1_t *read = bam_init1();
 
     // Prepare a read-tag-to-label hash table from a metadata table
+    log_message(
+            "Loading barcode-cluster information from metadata: %s",
+            INFO, logpath, OUT_LEVEL,
+            metapath
+            );
     struct rt2label *r2l = hash_readtag((char *) metapath);
 
     if (r2l == NULL) {
-        printf("Failed to hash the metadata.\n");
+        log_message("Failed to hash the metadata.", ERROR, logpath, OUT_LEVEL);
         return 1;
     }
 
     // Prepare a label-to-file-handle hash table from the above
+    log_message("Preparing output BAM files", INFO, logpath, OUT_LEVEL);
     struct label2fp *l2fp = NULL;
     l2fp = hash_labels(r2l, oprefix, header);
 
+    log_message("Starting to split files", INFO, logpath, OUT_LEVEL);
     // Iterate through the rt's and write to corresponding file handles.
     // Iterate through reads from input bam
     struct rt2label *lout;
