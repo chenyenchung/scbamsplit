@@ -44,25 +44,24 @@ int create_folder(char* pathname) {
        mkdir(pathname, 0700);
    } else {
        fprintf(stderr, "\n\nPlease note that output directory (%s) already exists.\n", pathname);
-       char overwrite[3];
-       char answer;
 
        int checking;
        checking = 1;
        while (checking == 1) {
            fprintf(stderr, "Are you sure you want to save results and potentially OVERWRITE files there? [y/n]: ");
-           fgets(overwrite, sizeof(overwrite), stdin);
+           unsigned char answer = (unsigned char) getc(stdin);
+
+
 
            // Clear the standard input to allow for the next round of input
            fflush(stdin);
-           sscanf(overwrite, "%c\n", &answer);
-
            answer = tolower(answer);
 
            if (answer == 'n') {
                checking = 0;
                return 1;
            }
+
 
            if (answer != 'y'){
                fprintf(stderr, "Please only answer yes or no.\n");
@@ -72,7 +71,6 @@ int create_folder(char* pathname) {
        }
 
        }
-
    return 0;
 }
 
