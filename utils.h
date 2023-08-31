@@ -6,6 +6,7 @@
 #define SCBAMSPLIT_UTILS_H
 int show_usage(const char* type);
 int create_folder(char* pathname);
+char * create_tempdir(char *dir);
 typedef enum {
     DEBUG = 5,
     ERROR = 0,

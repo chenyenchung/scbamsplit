@@ -74,6 +74,18 @@ int create_folder(char* pathname) {
    return 0;
 }
 
+char* create_tempdir(char *dir) {
+    char *tdir; // Name of temporary dir
+    tdir = malloc(sizeof(char) * (strlen(dir) + 5));
+    strcpy(tdir, dir);
+    strcat(tdir, "/tmp");
+    struct stat st = {0};
+    if (stat(tdir, &st) == -1) {
+        mkdir(tdir, 0700);
+    }
+    return tdir;
+}
+
 char * get_time() {
     /**
      * Need to be freed!

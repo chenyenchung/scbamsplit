@@ -3,11 +3,12 @@
 #include <stdio.h>   /* printf */
 #include <getopt.h>  /* getopt */
 #include <stdbool.h> /* Define boolean type */
-#include "htslib/sam.h" /* Use htslib to interact with bam files */
+#include "htslib/sam.h" /* Use htslib to interact with bam files, imports stdint.h as well */
 #include "uthash.h"  /* hash table */
 #include "hash.h"    /* Defining the hash tables actually used */
 #include "utils.h" /* Show help and create output dir */
 #include "shared_const.h" /* Defining shared constants */
+#include "sort.h"
 
 int main(int argc, char *argv[]) {
 
@@ -107,7 +108,7 @@ int main(int argc, char *argv[]) {
     }
 
     // If the output prefix does not end with /, add it.
-    int oplen = strlen(oprefix) - 1;
+    uint16_t oplen = strlen(oprefix) - 1;
     if (oprefix[oplen] != '/')
         oprefix = strcat(oprefix, "/");
 
@@ -116,7 +117,7 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "- Run condition:\n\n");
         fprintf(stderr, "\tInput bam: %s\n", bampath);
         fprintf(stderr, "\tInput metadata: %s\n", metapath);
-        fprintf(stderr, "\tMAPQ threshold: %ld\n", mapq);
+        fprintf(stderr, "\tMAPQ threshold: %d\n", mapq);
         fprintf(stderr, "\tRead tag to filter: %s\n", filter_tag);
         fprintf(stderr, "\tUMI tag to filter: %s\n", umi_tag);
         fprintf(stderr, "\tOutput prefix: %s\n", oprefix);
@@ -125,6 +126,8 @@ int main(int argc, char *argv[]) {
         } else {
             fprintf(stderr, "\tRunning **without** deduplication.\n\n");
         }
+    } else {
+
     }
 
     if (dryrun) {
@@ -181,6 +184,79 @@ int main(int argc, char *argv[]) {
     struct dedup *prev_reads = NULL, *find_reads;
     int ret;
 
+
+    int64_t chunk_size = 1000000;
+    log_message("Processing %lld reads per batch", INFO, logpath, OUT_LEVEL, chunk_size);
+
+    // Allocate heap memory for reads to sort
+    log_message("Preparing read chunks for sorting", DEBUG, logpath, OUT_LEVEL);
+    sam_read *chunk;
+    chunk = malloc(sizeof(sam_read) * chunk_size);
+    if (chunk == NULL) {
+        log_message("Insufficient memory. Please decrease chunk size used (%d)",
+                    ERROR, logpath, OUT_LEVEL, chunk_size);
+        return -1;
+    }
+
+    chunk_init(chunk, chunk_size);
+
+    int64_t size_retrieved = chunk_size;
+
+    int chunk_num = 0;
+    // Create temporary file dir for sorted chunks
+    char *tmpdir = create_tempdir(oprefix);
+
+    while (size_retrieved == chunk_size) {
+        chunk_num += 1;
+        log_message("Chunk #%lld filling", DEBUG, logpath, OUT_LEVEL, chunk_num);
+        size_retrieved = fill_chunk(fp, header, chunk, chunk_size);
+        if (size_retrieved < -1) {
+            log_message("Insufficient RN size (%d). Please increase RN size to at least %d",
+                        ERROR, logpath, OUT_LEVEL, RN_SIZE, -size_retrieved + 1);
+            return 1;
+        }
+        sort_chunk(chunk, size_retrieved);
+        sam_hdr_change_HD(header, "SO", "unknown");
+
+        char *tname;
+        tname = malloc(sizeof(char) * (strlen(tmpdir) + 16)); // tmp[/chunkXXXXX.bam]
+        char *uid[10];
+        strcpy(tname, tmpdir);
+        strcat(tname, "/chunk");
+        sprintf(uid, "%05d.bam", chunk_num);
+        strcat(tname, uid);
+
+        htsFile* tfp = sam_open(tname, "wb");
+        free(tname);
+
+        int write_status = sam_hdr_write(tfp, header);
+        if (write_status != 0) {
+            log_message(
+                    "Fail to write SAM header into temporary files",
+                    ERROR, logpath, OUT_LEVEL
+                    );
+            return 1;
+        }
+
+        int write_to_bam = 0;
+        for (int64_t i = 0; i < size_retrieved; i++) {
+            write_to_bam = sam_write1(tfp, header, chunk[i].read);
+            if (write_to_bam == -1) {
+                log_message(
+                        "Fail to write sorted reads into temporary files",
+                        ERROR, logpath, OUT_LEVEL
+                );
+                return 1;
+            }
+        }
+        sam_close(tfp);
+    }
+    free(tmpdir);
+    chunk_destroy(chunk, chunk_size);
+    free(chunk);
+
+
+    /*
     while ((ret = sam_read1(fp, header, read)) >= 0) {
         // Only deal with reads with both corrected CBCs (and UMIs if dedup is on)
         // Extract corrected CBC from the read
@@ -219,7 +295,7 @@ int main(int argc, char *argv[]) {
                         }
                         prev_reads = hash_cbumi(prev_reads, id);
                     }
-                    int write_to_bam;
+                    int8_t write_to_bam;
                     write_to_bam = sam_write1(fout->fp, header, read);
                     if (write_to_bam < 0) {
                         fprintf(stderr, "[LOUT] Fail to write bam file.");
@@ -229,7 +305,7 @@ int main(int argc, char *argv[]) {
         }
 
     }
-
+*/
     // Close file handles
     struct label2fp *qs, *qtmp;
     HASH_ITER(hh, l2fp, qs, qtmp) {
