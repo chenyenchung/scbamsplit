@@ -12,8 +12,11 @@
 
 int main(int argc, char *argv[]) {
 
+    // Use a flag to bypass commandline input during development
+    bool dev = true;
+
     int opt;
-    long int mapq = 0;
+    uint16_t mapq = 0;
     char *mapqstr = NULL;
     bool dedup = false, dryrun = false, verbose = false;
     char *bampath = NULL;
@@ -88,6 +91,19 @@ int main(int argc, char *argv[]) {
                 show_usage("regular");
                 return 1;
         }
+    }
+
+    // Bypass input for testing during development
+    if (dev) {
+        log_message(
+                "Dev mode on: Bypassing command line input",
+                DEBUG,
+                logpath,
+                OUT_LEVEL
+                );
+        bampath = "../data/test.bam";
+        metapath = "../data/test.txt";
+        oprefix = "./huge_out/";
     }
 
     // Error-out if missing arguments
