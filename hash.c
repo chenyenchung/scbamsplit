@@ -23,7 +23,7 @@ struct rt2label* hash_readtag(char *path) {
 
     // Read every line
     char meta_line[MAX_LINE_LENGTH]; // Temporary variable to store each line
-    int first_line = 1;
+    uint32_t first_line = 1;
     while (fgets(meta_line, MAX_LINE_LENGTH, meta_fp) != NULL) {
         // Assuming header and skip it
         if (first_line) {
@@ -35,7 +35,7 @@ struct rt2label* hash_readtag(char *path) {
 
         // Tokenize by comma
         char* tokens; // Temporary variable for iterating tokens
-        int field_num = 0; // Counting numbers to examine if expected field numbers are present
+        uint32_t field_num = 0; // Counting numbers to examine if expected field numbers are present
         char trt[MAX_LINE_LENGTH]; // Temporary variable for read tag content
         char tlabel[MAX_LINE_LENGTH]; // Temporary variable for corresponding label content
         tokens = strtok(meta_line, ",");
@@ -104,16 +104,35 @@ struct label2fp* hash_labels(struct rt2label *r2l, const char *prefix, sam_hdr_t
 
         // Prepare output file path
         char outpath[MAX_LINE_LENGTH];
+        uint32_t label_size = strlen(s->label);
+        char label_corrected[label_size + 1];
+
+        strcpy(label_corrected, s->label);
+        for (int i = 0; i < label_size; i++) {
+            if (label_corrected[i] == '/') {
+                label_corrected[i] = '-';
+            }
+        }
+
+
         strcpy(outpath, prefix);
-        strcat(outpath, s->label);
+        strcat(outpath, label_corrected);
         strcat(outpath, ".bam");
+
+
 
         // Create file handle from the path generated above
         // These handles must be closed manually!
         new_l2f->fp = sam_open(outpath, "wb");
 
         // Populate header
-        sam_hdr_write(new_l2f->fp, header);
+        uint8_t hdr_write;
+        hdr_write = sam_hdr_write(new_l2f->fp, header);
+
+        if (hdr_write != 0) {
+            fprintf(stderr, "[ERROR] Fail to prepare output files");
+            return NULL;
+        }
 
         // Add the new element to the hash table
         HASH_ADD_STR(l2f, label, new_l2f);
