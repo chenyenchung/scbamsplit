@@ -394,7 +394,7 @@ int8_t merge_bam_pairs(char * tmpdir, char * f1, char * f2, uint32_t oid, char* 
     return 0;
 }
 
-int8_t merge_bams(char * tmpdir) {
+char* merge_bams(char * tmpdir) {
     int64_t remaining = count_files(tmpdir);
     char *parray[] = {
             "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m",
@@ -403,7 +403,7 @@ int8_t merge_bams(char * tmpdir) {
 
     if (-1 == remaining) {
         log_msg("Fail to examine remaining files in %s during merging", ERROR, tmpdir);
-        return -1;
+        return NULL;
     }
 
     uint16_t mround = 0;
@@ -435,8 +435,7 @@ int8_t merge_bams(char * tmpdir) {
     strcpy(sorted_path, tmpdir);
     strcat(sorted_path, "sorted.bam");
     int mv_status = rename(sorted_out, sorted_path);
-    free(sorted_path);
     free(sorted_out);
     str_vec_free(bam_vec);
-    return 0;
+    return sorted_path;
 }

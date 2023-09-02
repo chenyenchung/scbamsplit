@@ -31,7 +31,7 @@ char * create_tempdir(char *dir);
 int8_t purge_tempdir(char *tmpdir);
 str_vec_t * get_bams(char *tmpdir);
 char * tname_init(char * tmpdir, char * prefix, int32_t uid_length, uint32_t oid);
-int8_t merge_bams(char * tmpdir);
+char * merge_bams(char * tmpdir);
 
 #define EARLY_EXIT_MERGE free(key1); \
 free(key2); \
