@@ -15,7 +15,7 @@ log_level_t OUT_LEVEL = DEBUG;
 uint16_t KEY_SIZE = 512;
 uint16_t RN_SIZE = 48;
 uint8_t CB_LENGTH = 20;
-uint8_t UB_LENGTH = 10;
+uint8_t UB_LENGTH = 20;
 
 bool dev = true;
 
@@ -200,30 +200,30 @@ int main(int argc, char *argv[]) {
     int ret;
 
 
-    int64_t chunk_size = 1000000;
+    int64_t chunk_size = 10000;
     log_msg("Processing %lld reads per chunk", INFO, chunk_size);
 
     // Allocate heap memory for reads to sort
     log_msg("Preparing read chunks for sorting", DEBUG);
 
-    sam_read_t *chunk = chunk_init(chunk_size);
+    sam_read_t **chunk = chunk_init(chunk_size);
     if (NULL == chunk) {
         return -1;
     }
 
-    char* tmpdir = process_bam(
-                fp, header, chunk, chunk_size, oprefix
-            );
+    char* tmpdir = process_bam(fp, header, chunk, chunk_size, oprefix);
     if (strcmp(tmpdir, "1") == 0) {
         return -1;
     }
-    purge_tempdir(tmpdir);
 
     // Done processing
     log_msg("Completed sorting all chunks", INFO);
     chunk_destroy(chunk, chunk_size);
-    free(chunk);
 
+    merge_bams(tmpdir);
+
+
+    free(tmpdir);
 
     /*
     while ((ret = sam_read1(fp, header, read)) >= 0) {

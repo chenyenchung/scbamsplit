@@ -63,7 +63,7 @@ int8_t get_MAPQ(bam1_t *read, char* val_ptr) {
 }
 
 int64_t fill_chunk(
-        samFile *fp, sam_hdr_t *header, sam_read_t read_array[],
+        samFile *fp, sam_hdr_t *header, sam_read_t **read_array,
         int64_t chunk_size
         ) {
     /**
@@ -121,7 +121,7 @@ int64_t fill_chunk(
             return -1;
         }
 
-        bam1_t *read_copy_status = bam_copy1(read_array[read_kept].read, temp_read);
+        bam1_t *read_copy_status = bam_copy1(read_array[read_kept]->read, temp_read);
         if (NULL == read_copy_status) {
             log_msg( "Fail to copy a BAM read. Could please an HTSlib issue?", ERROR);
             FREE_FILL_CHUNK;
@@ -149,19 +149,30 @@ int64_t fill_chunk(
         sprintf(RN, fmt, bam_get_qname(temp_read));
 
         // Initialize the key string
-        strcpy(read_array[read_kept].key, "");
+        strcpy(read_array[read_kept]->key, "");
 
         // Concatenate CBC, UMI, read name, primary or secondary, MAPQ
         // Lump reads that are supposed to be the same molecule
-        strcat(read_array[read_kept].key, CB);
-        strcat(read_array[read_kept].key, UB);
+        strcat(read_array[read_kept]->key, CB);
+        strcat(read_array[read_kept]->key, UB);
         // Show primary mapping first and sort by MAPQ
         // so later exporting mechanism can just export the
         // first and all secondary mappings (if exists) by
         // read name
-        strcat(read_array[read_kept].key, PR);
-        strcat(read_array[read_kept].key, MAPQ);
-        strcat(read_array[read_kept].key, RN);
+        strcat(read_array[read_kept]->key, PR);
+        strcat(read_array[read_kept]->key, MAPQ);
+        strcat(read_array[read_kept]->key, RN);
+
+        // Append sorting key in the output BAM as tag "SK"
+        int app_stat = bam_aux_append(
+                read_array[read_kept]->read, "SK", 'Z',
+                sizeof (char) * (strlen(read_array[read_kept]->key) + 1),
+                (const uint8_t*) read_array[read_kept]->key
+                );
+        if (0 != app_stat) {
+            log_msg("Fail to append sorting key to the read (%s)",
+            WARNING, read_array[read_kept]->key);
+        }
 
         read_kept++;
     }
@@ -170,20 +181,20 @@ int64_t fill_chunk(
 }
 
 int read_cmp(const void *a, const void *b) {
-    const sam_read_t * reada = (sam_read_t *) a;
-    const sam_read_t * readb = (sam_read_t *) b;
+    const sam_read_t * reada = *(sam_read_t **) a;
+    const sam_read_t * readb = *(sam_read_t **) b;
 
     return strcmp(reada->key, readb->key);
 }
 
-int sort_chunk(sam_read_t reads[], int64_t chunk_size) {
-    qsort(reads, chunk_size, sizeof(sam_read_t), read_cmp);
+int sort_chunk(sam_read_t **reads, int64_t chunk_size) {
+    qsort(reads, chunk_size, sizeof(sam_read_t*), read_cmp);
     return 0;
 }
 
-sam_read_t * chunk_init(uint32_t chunk_size) {
-    sam_read_t *chunk;
-    chunk = malloc(sizeof(sam_read_t) * chunk_size);
+sam_read_t** chunk_init(uint32_t chunk_size) {
+    sam_read_t **chunk;
+    chunk = malloc(sizeof(sam_read_t*) * chunk_size);
 
     if (NULL == chunk) {
         log_msg("Fail to allocate memory for sorting", ERROR);
@@ -191,8 +202,9 @@ sam_read_t * chunk_init(uint32_t chunk_size) {
     }
 
     for (uint32_t read_i = 0; read_i < chunk_size; read_i++) {
-        chunk[read_i].read = bam_init1();
-        chunk[read_i].key = malloc(sizeof(char) * KEY_SIZE);
+        chunk[read_i] = malloc(sizeof(sam_read_t));
+        chunk[read_i]->read = bam_init1();
+        chunk[read_i]->key = malloc(sizeof(char) * KEY_SIZE);
     }
 
     // A HTSlib-defined BAM read contains:
@@ -201,14 +213,16 @@ sam_read_t * chunk_init(uint32_t chunk_size) {
     return chunk;
 }
 
-void chunk_destroy(sam_read_t *read_array, uint32_t chunk_size) {
+void chunk_destroy(sam_read_t **read_array, uint32_t chunk_size) {
     for (uint32_t read_i = 0; read_i < chunk_size; read_i++) {
-        bam_destroy1(read_array[read_i].read);
-        free(read_array[read_i].key);
+        bam_destroy1(read_array[read_i]->read);
+        free(read_array[read_i]->key);
+        free(read_array[read_i]);
     }
+    free(read_array);
 }
 
-char* process_bam(samFile *fp, sam_hdr_t *header, sam_read_t chunk[], int64_t chunk_size, char *oprefix) {
+char* process_bam(samFile *fp, sam_hdr_t *header, sam_read_t **chunk, int64_t chunk_size, char *oprefix) {
     /**
      * @abstract Process all reads in an opened SAM/BAM file in chunks and save sorted reads in a temporary
      * directory.
@@ -241,13 +255,7 @@ char* process_bam(samFile *fp, sam_hdr_t *header, sam_read_t chunk[], int64_t ch
         sort_chunk(chunk, size_retrieved);
         sam_hdr_change_HD(header, "SO", "unknown");
 
-        char *tname;
-        tname = malloc(sizeof(char) * (strlen(tmpdir) + 16)); // tmp[/chunkXXXXX.bam]
-        char uid[10];
-        strcpy(tname, tmpdir);
-        strcat(tname, "/chunk");
-        sprintf(uid, "%05d.bam", chunk_num);
-        strcat(tname, uid);
+        char *tname = tname_init(tmpdir, "chunk", 5, chunk_num);
 
         htsFile* tfp = sam_open(tname, "wb");
         free(tname);
@@ -260,7 +268,7 @@ char* process_bam(samFile *fp, sam_hdr_t *header, sam_read_t chunk[], int64_t ch
 
         int write_to_bam = 0;
         for (int64_t i = 0; i < size_retrieved; i++) {
-            write_to_bam = sam_write1(tfp, header, chunk[i].read);
+            write_to_bam = sam_write1(tfp, header, chunk[i]->read);
             if (write_to_bam == -1) {
                 log_msg("Fail to write sorted reads into temporary files", ERROR);
                 return "1";
@@ -269,7 +277,7 @@ char* process_bam(samFile *fp, sam_hdr_t *header, sam_read_t chunk[], int64_t ch
         sam_close(tfp);
 
         // Exit early if in dev mode
-        if (dev && chunk_num > 2) break;
+//        if (dev && chunk_num > 2) break;
     }
     return tmpdir;
 }
