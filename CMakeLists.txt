@@ -162,9 +162,11 @@ message(STATUS "   HTSlib libraries: ${HTSlib_LIBRARIES}")
 #########
 # add extra include directories
 add_executable(scbamsplit
-        main.c
-        hash.c
-        utils.c
-        sort.c)
+        src/main.c
+        src/hash.c
+        src/utils.c
+        src/sort.c)
 target_include_directories(scbamsplit PUBLIC ${HTSlib_INCLUDE_DIRS})
 target_link_libraries(scbamsplit ${HTSlib_LIBRARIES})
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O0")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O0")
