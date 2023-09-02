@@ -3,10 +3,12 @@
 //
 #include <stdbool.h>
 #include <stdint.h>
+#include "hash.h"
+#include "htslib/sam.h"
 
 #ifndef SCBAMSPLIT_UTILS_H
 #define SCBAMSPLIT_UTILS_H
-// Logging utilities
+///////////// Logging utilities ////////////////////
 typedef enum {
     DEBUG = 5,
     ERROR = 0,
@@ -21,9 +23,14 @@ typedef struct {
     uint32_t length;
     uint16_t str_length;
 } str_vec_t;
+///////////////////////////////////////////////////
+
+///////////// String utilities ////////////////////
 
 str_vec_t* str_vec_init (int64_t n, uint16_t str_len);
 int8_t str_vec_free(str_vec_t *ptr);
+
+///////////////////////////////////////////////////
 
 int show_usage(const char* type);
 int create_directory(char* pathname);
@@ -32,6 +39,13 @@ int8_t purge_tempdir(char *tmpdir);
 str_vec_t * get_bams(char *tmpdir);
 char * tname_init(char * tmpdir, char * prefix, int32_t uid_length, uint32_t oid);
 char * merge_bams(char * tmpdir);
+
+int8_t read_dump(rt2label *r2l, rt2label *lout,
+                 label2fp *l2fp, label2fp *fout,
+                 char * this_CB, sam_hdr_t *header, bam1_t *read);
+int8_t deduped_dump(rt2label *r2l, rt2label *lout, label2fp *l2fp, label2fp *fout,
+                    char* tmpdir, char *sorted_path, bam1_t *read,
+                    char* filter_tag, char* umi_tag);
 
 #define EARLY_EXIT_MERGE free(key1); \
 free(key2); \

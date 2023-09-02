@@ -9,6 +9,9 @@
 #include "utils.h" /* Show help and create output dir */
 #include "sort.h"
 
+#define rdump(...) read_dump(r2l, lout, l2fp, fout, __VA_ARGS__)
+#define ddump(...) deduped_dump(r2l, lout, l2fp, fout, __VA_ARGS__)
+
 // Dealing with global vars
 char *OUT_PATH = "";
 log_level_t OUT_LEVEL = DEBUG;
@@ -17,14 +20,15 @@ uint16_t RN_SIZE = 48;
 uint8_t CB_LENGTH = 20;
 uint8_t UB_LENGTH = 20;
 
+int64_t chunk_size = 500000;
+
 bool dev = true;
 
 int main(int argc, char *argv[]) {
-
     // Use a flag to bypass commandline input during development
 
     int opt;
-    uint16_t mapq = 0;
+    uint16_t mapq_thres = 0;
     char *mapqstr = NULL;
     bool dedup = false, dryrun = false, verbose = false;
     char *bampath = NULL;
@@ -57,7 +61,7 @@ int main(int argc, char *argv[]) {
                 break;
             case 'q':
                 if (optarg != NULL) {
-                    mapq = strtol(optarg, &mapqstr, 10);
+                    mapq_thres = strtol(optarg, &mapqstr, 10);
                 }
                 break;
             case 'f':
@@ -106,6 +110,7 @@ int main(int argc, char *argv[]) {
         bampath = "../data/test.bam";
         metapath = "../data/test.txt";
         oprefix = "./huge_out/";
+        dedup = true;
     }
 
     // Error-out if missing arguments
@@ -130,7 +135,7 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "- Run condition:\n\n");
         fprintf(stderr, "\tInput bam: %s\n", bampath);
         fprintf(stderr, "\tInput metadata: %s\n", metapath);
-        fprintf(stderr, "\tMAPQ threshold: %d\n", mapq);
+        fprintf(stderr, "\tMAPQ threshold: %d\n", mapq_thres);
         fprintf(stderr, "\tRead tag to filter: %s\n", filter_tag);
         fprintf(stderr, "\tUMI tag to filter: %s\n", umi_tag);
         fprintf(stderr, "\tOutput prefix: %s\n", oprefix);
@@ -158,7 +163,7 @@ int main(int argc, char *argv[]) {
         return 0;
     } else if (-1 == mkdir_status) {
         return 1;
-    };
+    }
 
 
     ////////// bam related //////////////////////////////////////////////
@@ -179,7 +184,7 @@ int main(int argc, char *argv[]) {
 
     // Prepare a read-tag-to-label hash table from a metadata table
     log_msg("Loading barcode-cluster information from metadata: %s", INFO, metapath);
-    struct rt2label *r2l = hash_readtag((char *) metapath);
+    rt2label *r2l = hash_readtag((char *) metapath);
 
     if (r2l == NULL) {
         log_msg("Failed to hash the metadata.", ERROR);
@@ -188,125 +193,98 @@ int main(int argc, char *argv[]) {
 
     // Prepare a label-to-file-handle hash table from the above
     log_msg("Preparing output BAM files", INFO);
-    struct label2fp *l2fp = NULL;
+    label2fp *l2fp = NULL;
     l2fp = hash_labels(r2l, oprefix, header);
 
-    log_msg("Starting to split files", INFO);
     // Iterate through the rt's and write to corresponding file handles.
     // Iterate through reads from input bam
-    struct rt2label *lout;
-    struct label2fp *fout;
-    struct dedup *prev_reads = NULL, *find_reads;
-    int ret;
+    rt2label *lout;
+    label2fp *fout;
+    int32_t read_stat;
 
-
-    int64_t chunk_size = 10000;
-    log_msg("Processing %lld reads per chunk", INFO, chunk_size);
-
-    // Allocate heap memory for reads to sort
-    log_msg("Preparing read chunks for sorting", DEBUG);
-
-    sam_read_t **chunk = chunk_init(chunk_size);
-    if (NULL == chunk) {
-        return -1;
-    }
-
-    char* tmpdir = process_bam(fp, header, chunk, chunk_size, oprefix);
-    if (strcmp(tmpdir, "1") == 0) {
-        return -1;
-    }
-
-    // Done processing
-    log_msg("Completed sorting all chunks", INFO);
-    chunk_destroy(chunk, chunk_size);
-
-    merge_bams(tmpdir);
-
-
-    free(tmpdir);
-
-    /*
-    while ((ret = sam_read1(fp, header, read)) >= 0) {
-        // Only deal with reads with both corrected CBCs (and UMIs if dedup is on)
-        // Extract corrected CBC from the read
-        if (bam_aux_get(read, filter_tag) == NULL) {
-            // If a read has no CBC, just continue.
-            continue;
-        }
-
-        if (dedup && bam_aux_get(read, umi_tag) == NULL) {
-            // If UMI is needed for dedup, ignore the reads without it.
-            continue;
-        }
-
-        unsigned char * cbc = bam_aux_get(read, filter_tag) + 1;
-
-        // Query read-tag-to-label table
-        HASH_FIND_STR(r2l, (char *) cbc, lout);
-
-        // If the read tag is legit
-        if (lout) {
-            // Query the read-tag-to-output table
-            HASH_FIND_STR(l2fp, lout->label, fout);
-            if (fout) {
-                if (read->core.qual >= mapq) {
-                    if (dedup) {
-                        // Construct an identifier = CB + UB
-                        unsigned char * umi = bam_aux_get(read, umi_tag) + 1;
-                        char id[ID_LENGTH];
-                        strcpy(id, (char *) cbc);
-                        strcat(id, (char *) umi);
-                        HASH_FIND_STR(prev_reads, (char *) id, find_reads);
-                        if (find_reads) {
-                            // If the CBC + UMI combination was observed before
-                            // Just continue.
-                            continue;
-                        }
-                        prev_reads = hash_cbumi(prev_reads, id);
-                    }
-                    int8_t write_to_bam;
-                    write_to_bam = sam_write1(fout->fp, header, read);
-                    if (write_to_bam < 0) {
-                        fprintf(stderr, "[LOUT] Fail to write bam file.");
-                    }
-                }
+    if (!dedup) {
+        char *current_CB;
+        char *this_CB;
+        char *this_UB;
+        current_CB = (char *) malloc(sizeof(char) * CB_LENGTH);
+        this_CB = (char *) malloc(sizeof(char) * CB_LENGTH);
+        this_UB = (char *) malloc(sizeof(char) * UB_LENGTH);
+        while (0 <= (read_stat = sam_read1(fp, header, read))) {
+            // Get read metadata
+            int8_t cb_stat = get_CB(read, filter_tag, this_CB);
+            int8_t ub_stat = get_UB(read, umi_tag, this_UB);
+            int16_t mapq = (read)->core.qual;
+            mapq = mapq == NULL?0:mapq;
+            if (-1 == cb_stat || -1 == ub_stat || mapq < mapq_thres) {
+                // Ignore reads without CB and UMI for consistency
+                continue;
+            }
+            // Exporting process
+//            int8_t rdump_stat = read_dump(r2l, lout, l2fp, fout, this_CB, header, read);
+            int8_t rdump_stat = rdump(this_CB, header, read);
+            if (0 != rdump_stat) {
+                log_msg("Fail to write sorted reads to individual BAM file (%s)", ERROR, lout->label);
             }
         }
+        // No-dedup split done
+        free(current_CB);
+        free(this_CB);
+        free(this_UB);
+        bam_hdr_destroy(header);
+        sam_close(fp);
+    } else {
+        // Deduplication-specific code
+        log_msg("Processing %lld reads per chunk", INFO, chunk_size);
 
+        // Allocate heap memory for reads to sort
+        log_msg("Preparing read chunks for sorting", DEBUG);
+
+        sam_read_t **chunk = chunk_init(chunk_size);
+        if (NULL == chunk) {
+            return -1;
+        }
+
+        char* tmpdir = process_bam(fp, header, chunk, chunk_size, oprefix, mapq_thres);
+        if (strcmp(tmpdir, "1") == 0) {
+            return -1;
+        }
+
+        // Done processing
+        log_msg("Completed sorting all chunks", INFO);
+        chunk_destroy(chunk, chunk_size);
+
+        char * sorted_path = merge_bams(tmpdir);
+
+        // Deduped-split
+        sam_close(fp);
+        bam_hdr_destroy(header);
+
+        log_msg("Open sorted file (%s) to split", INFO, sorted_path);
+
+        int8_t dump_stat = ddump(tmpdir, sorted_path, read, filter_tag, umi_tag);
+        if (1 == dump_stat) {
+            log_msg("Please check the output folder to remove remaining temporary folder", WARNING);
+        }
     }
-*/
+
     // Close file handles
-    struct label2fp *qs, *qtmp;
+    label2fp *qs, *qtmp;
     HASH_ITER(hh, l2fp, qs, qtmp) {
         sam_close(qs->fp);
-//        printf("label is %s\n", qs->label);
         HASH_DEL(l2fp, qs);
         free(qs);
     }
 
     // free the hash table contents
-    struct rt2label *s, *tmp;
+    rt2label *s, *tmp;
     HASH_ITER(hh, r2l, s, tmp) {
         HASH_DEL(r2l, s);
         free(s);
     }
 
-    // Close CB-UMI hash table
-    if (dedup) {
-        struct dedup *ds, *dtmp;
-        HASH_ITER(hh, prev_reads, ds, dtmp) {
-            HASH_DEL(prev_reads, ds);
-            free(ds);
-        }
-    }
 
-
-    // Close opened bam files
+    // Free temporary read
     bam_destroy1(read);
-    bam_hdr_destroy(header);
-    sam_close(fp);
-
-
 
     return 0;
 }

@@ -10,6 +10,20 @@
 
 #define FREE_FILL_CHUNK bam_destroy1(temp_read); free(PR); free(MAPQ); free(UB); free(CB); free(RN)
 
+// TODO: Is it possible to compress the reads in-memory?
+// Possibility:
+// 1. bam_read1() calls bgzf_read(), which reads both compressed and uncompressed data as a BGZF*
+//   - It seems that inflation is not as resource intensive (~3% CPU time with current implementation).
+// 2. bam_write1() probably calls bgzf_write() which in turn uses lazy_flush().
+//   - lazy_flush() calls bgzf_flush(), which occupies ~75% CPU time.
+//   - Most time is spent over bgzf_compress().
+// 3. If we can piggyback on bgzf_read to keep compressed data block in RAM in merging, and bypass further
+//    bgzf_compress, this should achieve 2X - 3X speed up.
+//   - fill_block() will still require bam_read1() to construct sorting key, but in principle, the array could
+//     be stored in ram as [key][bgzf-compressed block]? This would also decrease mem usage for sorting.
+//   - In this case, temporary files can be custom binary which [key][bgzf-compressed read data], and are read
+//     as compressed & only getting the key (which is fixed-length).
+
 int8_t get_tag(bam1_t *read, char* tag, char* tag_ptr) {
     // bam_aux_get_str() exists, but to return a kstring,
     // it involves realloc() and is rather slow.
@@ -64,7 +78,7 @@ int8_t get_MAPQ(bam1_t *read, char* val_ptr) {
 
 int64_t fill_chunk(
         samFile *fp, sam_hdr_t *header, sam_read_t **read_array,
-        int64_t chunk_size
+        int64_t chunk_size, int16_t qthres
         ) {
     /**
      * @abstract Fill read buffer to designated size and return the index of next read to read or -1
@@ -74,6 +88,7 @@ int64_t fill_chunk(
      * @header A header pointer from sam_hdr_read()
      * @read A pointer to a sam_read_t array to be filled
      * @chunk_size An integer to indicate how large the cache chunk to be filled
+     * @qthres An integer specifying the MAPQ threshold to pass to keep the read
      * @returns The number of reads that have been allocated into the chunk on success; -1 on error;
      * -[OBSERVED_READ_NAME_SIZE] when read names are not sufficiently padded
      */
@@ -110,9 +125,10 @@ int64_t fill_chunk(
         int8_t ub_stat = get_UB(temp_read, "UB", UB);
         int8_t prim_stat = is_primary(temp_read, PR);
         int8_t mapq_stat = get_MAPQ(temp_read, MAPQ);
+        int16_t mapq_val = temp_read->core.qual;
 
         // Skip reads that miss CB, UB, bitwise flag, or MAPQ
-        if ((-1 == cb_stat) || (-1 == ub_stat) || (1 == prim_stat) || (1 == mapq_stat)) {
+        if ((-1 == cb_stat) || (-1 == ub_stat) || (1 == prim_stat) || (1 == mapq_stat) || qthres > mapq_val) {
             // If a read has no CBC or UMI, just let it go.
             continue;
         } else if (1 == cb_stat || 1 == ub_stat) {
@@ -166,7 +182,7 @@ int64_t fill_chunk(
         // Append sorting key in the output BAM as tag "SK"
         int app_stat = bam_aux_append(
                 read_array[read_kept]->read, "SK", 'Z',
-                sizeof (char) * (strlen(read_array[read_kept]->key) + 1),
+                sizeof(char) * (strlen(read_array[read_kept]->key) + 1),
                 (const uint8_t*) read_array[read_kept]->key
                 );
         if (0 != app_stat) {
@@ -222,7 +238,7 @@ void chunk_destroy(sam_read_t **read_array, uint32_t chunk_size) {
     free(read_array);
 }
 
-char* process_bam(samFile *fp, sam_hdr_t *header, sam_read_t **chunk, int64_t chunk_size, char *oprefix) {
+char* process_bam(samFile *fp, sam_hdr_t *header, sam_read_t **chunk, int64_t chunk_size, char *oprefix, int16_t qthres) {
     /**
      * @abstract Process all reads in an opened SAM/BAM file in chunks and save sorted reads in a temporary
      * directory.
@@ -231,6 +247,7 @@ char* process_bam(samFile *fp, sam_hdr_t *header, sam_read_t **chunk, int64_t ch
      * @chunk An array of sam_read_t's
      * @chunk_size The size of the array (a 64-bit integer)
      * @oprefix Output dir prefix
+     * @qthres An integer specifying the MAPQ threshold to pass to keep the read
      * @returns A string: the path for the temporary directory containing sorted chunks if succeeded; "-1" if failed.
      */
 
@@ -243,7 +260,7 @@ char* process_bam(samFile *fp, sam_hdr_t *header, sam_read_t **chunk, int64_t ch
     while (size_retrieved == chunk_size) {
         chunk_num += 1;
         log_msg("Chunk #%lld filling", DEBUG, chunk_num);
-        size_retrieved = fill_chunk(fp, header, chunk, chunk_size);
+        size_retrieved = fill_chunk(fp, header, chunk, chunk_size, 2);
         if (size_retrieved < -1) {
             log_msg("Insufficient RN size (%d). Please increase RN size to at least %d", ERROR,
                     RN_SIZE, -size_retrieved + 1);
@@ -277,7 +294,7 @@ char* process_bam(samFile *fp, sam_hdr_t *header, sam_read_t **chunk, int64_t ch
         sam_close(tfp);
 
         // Exit early if in dev mode
-//        if (dev && chunk_num > 2) break;
+        if (dev && chunk_num > 4) break;
     }
     return tmpdir;
 }

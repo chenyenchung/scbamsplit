@@ -6,8 +6,10 @@
 #include <ctype.h> /* For tolower() */
 #include "utils.h"
 #include "sort.h"
-#include "htslib/sam.h"
+#include "uthash.h"
+#include "hash.h"
 #include "shared_const.h" /* For shared constants */
+#include "htslib/sam.h"
 #include "sys/stat.h" /* stat() and mkdir() */
 #include <time.h>
 #include <stdarg.h>
@@ -438,4 +440,137 @@ char* merge_bams(char * tmpdir) {
     free(sorted_out);
     str_vec_free(bam_vec);
     return sorted_path;
+}
+
+int8_t read_dump(rt2label *r2l, rt2label *lout, label2fp *l2fp, label2fp *fout,
+                 char * this_CB, sam_hdr_t *header, bam1_t *read) {
+    int32_t write_to_bam = 0;
+    HASH_FIND_STR(r2l, (char *) this_CB, lout);
+
+    // If the CBC is found
+    if (lout) {
+        // Query the CBC-to-output table
+        HASH_FIND_STR(l2fp, lout->label, fout);
+        if (fout) {
+            write_to_bam = sam_write1(fout->fp, header, read);
+            if (write_to_bam < 0) {
+                // Decide how to deal with writing failure outside
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
+int8_t deduped_dump(rt2label *r2l, rt2label *lout, label2fp *l2fp, label2fp *fout,
+                    char* tmpdir, char *sorted_path, bam1_t *read,
+                    char* filter_tag, char* umi_tag) {
+    int32_t read_stat;
+    samFile *sfp = sam_open(sorted_path, "r");
+    sam_hdr_t *sheader = sam_hdr_read(sfp);
+    char *current_UB;
+    char *this_UB;
+    char *RN_keep;
+    char *this_RN;
+    char *current_CB;
+    char *this_CB;
+
+    current_UB = (char *) malloc(sizeof(char) * UB_LENGTH);
+    this_UB = (char *) malloc(sizeof(char) * UB_LENGTH);
+    RN_keep = (char *) malloc(sizeof(char) * RN_SIZE);
+    this_RN = (char *) malloc(sizeof(char) * RN_SIZE);
+    current_CB = (char *) malloc(sizeof(char) * CB_LENGTH);
+    this_CB = (char *) malloc(sizeof(char) * CB_LENGTH);
+
+
+    bool first_read = true;
+    int32_t same_CB = 0;
+    int32_t same_UB = 0;
+    int32_t to_export = 0;
+    int32_t write_to_bam = 0;
+    while (0 <= (read_stat = sam_read1(sfp, sheader, read))) {
+        // Get read metadata
+        int8_t cb_stat = get_CB(read, filter_tag, this_CB);
+        if (-1 == cb_stat) {
+            log_msg("Cannot retrieve cell barcode from the sorted BAM", ERROR);
+            return 1;
+        }
+        int8_t ub_stat = get_UB(read, umi_tag, this_UB);
+        if (-1 == ub_stat) {
+            log_msg("Cannot retrieve UMI from the sorted BAM", ERROR);
+            return 1;
+        }
+        char * rn_ptr;
+        if (NULL == (rn_ptr = bam_get_qname(read))) {
+            log_msg("Cannot retrieve read name from the sorted BAM", ERROR);
+        } else {
+            strcpy(this_RN, rn_ptr);
+        }
+
+        // We want to keep the first primary read of each CB-UMI combination
+        // and all secondary mappings of the same read.
+        // With the sorting mechanism, this will be the first read of each
+        // CB-UMI combo.
+        if (first_read) {
+            first_read = !first_read;
+            strcpy(current_CB, this_CB);
+            strcpy(current_UB, this_UB);
+            strcpy(RN_keep, this_RN);
+        }
+
+
+        // Check if we have entered the next CB-UMI combo.
+        // Update the RN to keep if so.
+        same_CB = strcmp(current_CB, this_CB);
+        same_UB = strcmp(current_UB, this_UB);
+        if (0 != same_CB || 0 != same_UB) {
+            strcpy(RN_keep, this_RN);
+        }
+        if (0 != same_CB) {
+            strcpy(current_CB, this_CB);
+        }
+        if (0 != same_UB) {
+            strcpy(current_UB, this_UB);
+        }
+
+        // Export reads with the highest MAPQ per CB-UMI combo
+        to_export = strcmp(RN_keep, this_RN);
+        if (0 != to_export) {
+            continue;
+        }
+
+        // Exporting process
+        int8_t rdump_stat = read_dump(r2l, lout, l2fp, fout, this_CB, sheader, read);
+        if (0 != rdump_stat) {
+            log_msg("Fail to write sorted reads to split BAM file (%s)", ERROR, lout->label);
+            return -1;
+        }
+
+    }
+
+    int32_t rm_tmp = remove(sorted_path);
+    if (0 != rm_tmp) {
+        log_msg("Fail to remove temporary file (%s)", ERROR, sorted_path);
+        return 1;
+    }
+
+    int32_t rm_tmpdir = rmdir(tmpdir);
+    if (0 != rm_tmpdir) {
+        log_msg("Fail to remove temporary (%directory)", ERROR, tmpdir);
+        return 1;
+    }
+
+    // Deduped-split done
+    free(current_UB);
+    free(this_UB);
+    free(RN_keep);
+    free(this_RN);
+    free(current_CB);
+    free(this_CB);
+
+    sam_close(sfp);
+    sam_hdr_destroy(sheader);
+    free(sorted_path);
+    free(tmpdir);
+    return 0;
 }
