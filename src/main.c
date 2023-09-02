@@ -7,16 +7,21 @@
 #include "uthash.h"  /* hash table */
 #include "hash.h"    /* Defining the hash tables actually used */
 #include "utils.h" /* Show help and create output dir */
-#include "shared_const.h" /* Defining shared constants */
 #include "sort.h"
 
-char *out_path = "";
-log_level_t out_level = DEBUG;
+// Dealing with global vars
+char *OUT_PATH = "";
+log_level_t OUT_LEVEL = DEBUG;
+uint16_t KEY_SIZE = 512;
+uint16_t RN_SIZE = 48;
+uint8_t CB_LENGTH = 20;
+uint8_t UB_LENGTH = 10;
+
+bool dev = true;
 
 int main(int argc, char *argv[]) {
 
     // Use a flag to bypass commandline input during development
-    bool dev = true;
 
     int opt;
     uint16_t mapq = 0;

@@ -5,8 +5,11 @@
 #ifndef SCBAMSPLIT_SORT_H
 #define SCBAMSPLIT_SORT_H
 #include "htslib/sam.h"
-#define KEY_SIZE 512
-#define RN_SIZE 48
+
+extern uint16_t KEY_SIZE;
+extern uint16_t RN_SIZE;
+extern uint8_t CB_LENGTH;
+extern uint8_t UB_LENGTH;
 
 typedef struct {
     char *key;
