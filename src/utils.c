@@ -11,6 +11,8 @@
 #include <time.h>
 #include <stdarg.h>
 #include <errno.h>
+#include <dirent.h>
+#include <unistd.h>
 
 
 
@@ -159,10 +161,43 @@ char* create_tempdir(char *basedir) {
     char *tdir; // Name of temporary dir
     tdir = malloc(sizeof(char) * (strlen(basedir) + 5));
     strcpy(tdir, basedir);
-    strcat(tdir, "/tmp");
+    strcat(tdir, "tmp/");
     struct stat st = {0};
     if (stat(tdir, &st) == -1) {
         mkdir(tdir, 0700);
     }
     return tdir;
+}
+
+int8_t purge_tempdir(char *tmpdir) {
+    DIR *dir_ptr;
+    struct dirent *en;
+    dir_ptr = opendir(tmpdir);
+
+    char *rm_path;
+    rm_path = (char *) malloc(sizeof(char) * (strlen(tmpdir) + 16));
+
+    if (dir_ptr) {
+        while((en = readdir(dir_ptr)) != NULL) {
+            // Ignore . and ..
+            if ('.' == en->d_name[0]) continue;
+
+            // Construct path for individual file removal
+            strcpy(rm_path, tmpdir);
+            strcat(rm_path, en->d_name);
+            int rm_stat = remove(rm_path);
+            if (0 != rm_stat) {
+                log_msg("Fail to remove temporary file %s", ERROR, en->d_name);
+                return 1;
+            }
+        }
+
+        closedir(dir_ptr);
+        int rmdir_stat = rmdir(tmpdir);
+        if (0 != rmdir_stat) {
+            log_msg("Fail to remove temporary directory (%s)", ERROR, tmpdir);
+        }
+        free(tmpdir);
+    }
+    return 0;
 }

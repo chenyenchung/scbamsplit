@@ -38,7 +38,7 @@ int8_t is_primary(bam1_t *read, char* flag_ptr) {
      * @abstract Examine bit flag of a SAM read to see if it's a mapped
      * primary record
      * @read A pointer to bam1_t (HTSlib)
-     * @return 1 if the record is primary; 2 in other cases
+     * @returns 1 if the record is primary; 2 in other cases
      */
     bool not_secondary = !((read)->core.flag & 256); // Flag for secondary alignment is 256
     bool mapped = !((read)->core.flag & 4); // Flag for unmapped is 4
@@ -63,7 +63,7 @@ int8_t get_MAPQ(bam1_t *read, char* val_ptr) {
 }
 
 int64_t fill_chunk(
-        samFile *fp, sam_hdr_t *header, sam_read read_array[],
+        samFile *fp, sam_hdr_t *header, sam_read_t read_array[],
         int64_t chunk_size
         ) {
     /**
@@ -72,9 +72,9 @@ int64_t fill_chunk(
      *
      * @fp A file descriptor for a SAM/BAM file
      * @header A header pointer from sam_hdr_read()
-     * @read A pointer to a sam_read array to be filled
+     * @read A pointer to a sam_read_t array to be filled
      * @chunk_size An integer to indicate how large the cache chunk to be filled
-     * @return The number of reads that have been allocated into the chunk on success; -1 on error;
+     * @returns The number of reads that have been allocated into the chunk on success; -1 on error;
      * -[OBSERVED_READ_NAME_SIZE] when read names are not sufficiently padded
      */
 
@@ -170,20 +170,20 @@ int64_t fill_chunk(
 }
 
 int read_cmp(const void *a, const void *b) {
-    const sam_read * reada = (sam_read *) a;
-    const sam_read * readb = (sam_read *) b;
+    const sam_read_t * reada = (sam_read_t *) a;
+    const sam_read_t * readb = (sam_read_t *) b;
 
     return strcmp(reada->key, readb->key);
 }
 
-int sort_chunk(sam_read reads[], int64_t chunk_size) {
-    qsort(reads, chunk_size, sizeof(sam_read), read_cmp);
+int sort_chunk(sam_read_t reads[], int64_t chunk_size) {
+    qsort(reads, chunk_size, sizeof(sam_read_t), read_cmp);
     return 0;
 }
 
-sam_read * chunk_init(uint32_t chunk_size) {
-    sam_read *chunk;
-    chunk = malloc(sizeof(sam_read) * chunk_size);
+sam_read_t * chunk_init(uint32_t chunk_size) {
+    sam_read_t *chunk;
+    chunk = malloc(sizeof(sam_read_t) * chunk_size);
 
     if (NULL == chunk) {
         log_msg("Fail to allocate memory for sorting", ERROR);
@@ -201,14 +201,24 @@ sam_read * chunk_init(uint32_t chunk_size) {
     return chunk;
 }
 
-void chunk_destroy(sam_read *read_array, uint32_t chunk_size) {
+void chunk_destroy(sam_read_t *read_array, uint32_t chunk_size) {
     for (uint32_t read_i = 0; read_i < chunk_size; read_i++) {
         bam_destroy1(read_array[read_i].read);
         free(read_array[read_i].key);
     }
 }
 
-int8_t process_bam(samFile *fp, sam_hdr_t *header, sam_read chunk[], int64_t chunk_size, char *oprefix) {
+char* process_bam(samFile *fp, sam_hdr_t *header, sam_read_t chunk[], int64_t chunk_size, char *oprefix) {
+    /**
+     * @abstract Process all reads in an opened SAM/BAM file in chunks and save sorted reads in a temporary
+     * directory.
+     * @fp A pointer to a samFile
+     * @header A pointer to a SAM file header
+     * @chunk An array of sam_read_t's
+     * @chunk_size The size of the array (a 64-bit integer)
+     * @oprefix Output dir prefix
+     * @returns A string: the path for the temporary directory containing sorted chunks if succeeded; "-1" if failed.
+     */
 
     int64_t size_retrieved = chunk_size;
     int chunk_num = 0;
@@ -223,10 +233,10 @@ int8_t process_bam(samFile *fp, sam_hdr_t *header, sam_read chunk[], int64_t chu
         if (size_retrieved < -1) {
             log_msg("Insufficient RN size (%d). Please increase RN size to at least %d", ERROR,
                     RN_SIZE, -size_retrieved + 1);
-            return 1;
+            return "1";
         } else if (size_retrieved == -1) {
             // Error message is generated in fill_chunk()
-            return 1;
+            return "1";
         }
         sort_chunk(chunk, size_retrieved);
         sam_hdr_change_HD(header, "SO", "unknown");
@@ -245,7 +255,7 @@ int8_t process_bam(samFile *fp, sam_hdr_t *header, sam_read chunk[], int64_t chu
         int write_status = sam_hdr_write(tfp, header);
         if (write_status != 0) {
             log_msg( "Fail to write SAM header into temporary files", ERROR);
-            return 1;
+            return "1";
         }
 
         int write_to_bam = 0;
@@ -253,7 +263,7 @@ int8_t process_bam(samFile *fp, sam_hdr_t *header, sam_read chunk[], int64_t chu
             write_to_bam = sam_write1(tfp, header, chunk[i].read);
             if (write_to_bam == -1) {
                 log_msg("Fail to write sorted reads into temporary files", ERROR);
-                return 1;
+                return "1";
             }
         }
         sam_close(tfp);
@@ -261,6 +271,5 @@ int8_t process_bam(samFile *fp, sam_hdr_t *header, sam_read chunk[], int64_t chu
         // Exit early if in dev mode
         if (dev && chunk_num > 2) break;
     }
-    free(tmpdir);
-    return 0;
+    return tmpdir;
 }

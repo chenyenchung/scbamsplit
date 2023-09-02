@@ -206,17 +206,18 @@ int main(int argc, char *argv[]) {
     // Allocate heap memory for reads to sort
     log_msg("Preparing read chunks for sorting", DEBUG);
 
-    sam_read *chunk = chunk_init(chunk_size);
+    sam_read_t *chunk = chunk_init(chunk_size);
     if (NULL == chunk) {
         return -1;
     }
 
-    int8_t process_stat = process_bam(
+    char* tmpdir = process_bam(
                 fp, header, chunk, chunk_size, oprefix
             );
-    if (1 == process_stat) {
+    if (strcmp(tmpdir, "1") == 0) {
         return -1;
     }
+    purge_tempdir(tmpdir);
 
     // Done processing
     log_msg("Completed sorting all chunks", INFO);
