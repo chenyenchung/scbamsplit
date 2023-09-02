@@ -22,7 +22,9 @@ int64_t fill_chunk(
         int64_t chunk_size
         );
 int sort_chunk(sam_read read_array[], int64_t chunk_size);
-void chunk_init(sam_read *read_array, uint32_t chunk_size);
+sam_read * chunk_init(uint32_t chunk_size);
 void chunk_destroy(sam_read *read_array, uint32_t chunk_size);
+int8_t process_bam(samFile *fp, sam_hdr_t *header, sam_read chunk[], int64_t chunk_size, char *oprefix);
+
 
 #endif //SCBAMSPLIT_SORT_H

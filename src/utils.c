@@ -12,6 +12,8 @@
 #include <stdarg.h>
 #include <errno.h>
 
+
+
 int show_usage(const char* type) {
     if (strcmp(type, "unknown") == 0) {
         fprintf(stderr, "Unknown options are provided. Please see below for available options.\n\n");
@@ -65,14 +67,14 @@ char * get_time() {
     return timestamp;
 }
 
-void log_message(char* message, log_level_t level, char* log_path, log_level_t out_level, ...) {
+void log_message(char* log_path, log_level_t out_level, char* message, log_level_t level, ...) {
     va_list args;
-    va_start(args, out_level);
+    va_start(args, level);
 
     FILE *logf;
     char *level_flag[] = {"[ERROR  ]", "[WARNING]", "", "[INFO   ]", "", "[DEBUG  ]"};
-    if (strcmp("", out_path) != 0) {
-        logf = fopen(out_path, "a");
+    if (strcmp("", log_path) != 0) {
+        logf = fopen(log_path, "a");
     } else {
         logf = stderr;
     }
@@ -87,7 +89,7 @@ void log_message(char* message, log_level_t level, char* log_path, log_level_t o
 
     // Timestamp the message
     fprintf(logf, " | ");
-    fprintf(logf, timestamp);
+    fprintf(logf, "%s", timestamp);
     free(timestamp);
 
     // Print the message
@@ -96,7 +98,7 @@ void log_message(char* message, log_level_t level, char* log_path, log_level_t o
     va_end(args);
     fprintf(logf, "\n");
 
-    if (strcmp("", out_path) != 0) {
+    if (strcmp("", log_path) != 0) {
         fclose(logf);
     }
 }
@@ -117,18 +119,12 @@ int create_directory(char* pathname) {
        int mkdir_stat = mkdir(pathname, 0700);
        if (0 != mkdir_stat) {
            int err_code = errno;
-           log_message(
-                   "Fail to create directory (Error: %s)",
-                   ERROR,
-                   out_path,
-                   out_level,
-                   strerror(err_code)
-                   );
+           log_msg("Fail to create directory (Error: %s)", ERROR, strerror(err_code));
            return -1;
        }
+       return 0;
    } else {
-       log_message("Please note that output directory (%s) already exists.\n",
-               WARNING, out_path, out_level, pathname);
+       log_msg("Please note that output directory (%s) already exists.\n", WARNING, pathname);
 
        int checking;
        checking = 1;
@@ -156,7 +152,7 @@ int create_directory(char* pathname) {
        }
 
        }
-   return 1;
+   return 0;
 }
 
 char* create_tempdir(char *basedir) {
@@ -170,4 +166,3 @@ char* create_tempdir(char *basedir) {
     }
     return tdir;
 }
-

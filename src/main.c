@@ -47,7 +47,7 @@ int main(int argc, char *argv[]) {
             {"help", no_argument, NULL, 'h'}
     };
 
-    log_message("Parsing commandline flags", DEBUG, out_path, out_level);
+    log_msg("Parsing commandline flags", DEBUG);
 
 
     while ((opt = getopt_long(argc, argv, ":dq:f:m:o:t:u:nvh", cl_opts, NULL)) != -1) {
@@ -102,12 +102,7 @@ int main(int argc, char *argv[]) {
 
     // Bypass input for testing during development
     if (dev) {
-        log_message(
-                "Dev mode on: Bypassing command line input",
-                DEBUG,
-                out_path,
-                out_level
-                );
+        log_msg("Dev mode on: Bypassing command line input", DEBUG);
         bampath = "../data/test.bam";
         metapath = "../data/test.txt";
         oprefix = "./huge_out/";
@@ -115,12 +110,7 @@ int main(int argc, char *argv[]) {
 
     // Error-out if missing arguments
     if (bampath == NULL || metapath == NULL) {
-        log_message(
-                "Error: Missing required arguments",
-                ERROR,
-                out_path,
-                out_level
-        );
+        log_msg("Error: Missing required arguments", ERROR);
         show_usage("regular");
         return 1;
     }
@@ -149,8 +139,6 @@ int main(int argc, char *argv[]) {
         } else {
             fprintf(stderr, "\tRunning **without** deduplication.\n\n");
         }
-    } else {
-
     }
 
     if (dryrun) {
@@ -162,21 +150,11 @@ int main(int argc, char *argv[]) {
 
     // Create output folder if it does not exist
     // If it exists, ask the user for confirmation to prevent unexpected overwriting
-    log_message("Creating output directory", INFO, out_path, out_level);
+    log_msg("Creating output directory", INFO);
     int mkdir_status;
     if (1 == (mkdir_status = create_directory(oprefix))) {
-        log_message(
-                "Exiting because the user declined overwrite",
-                INFO,
-                out_path,
-                out_level
-                );
-        log_message(
-                "Please provide a new path for the output directory",
-                WARNING,
-                out_path,
-                out_level
-                );
+        log_msg("Exiting because the user declined overwrite", INFO);
+        log_msg("Please provide a new path for the output directory", WARNING );
         return 0;
     } else if (-1 == mkdir_status) {
         return 1;
@@ -186,37 +164,34 @@ int main(int argc, char *argv[]) {
     ////////// bam related //////////////////////////////////////////////
     // Open input bam file from CellRanger
     // Remember to close file handle!
-    log_message("Reading input BAM file: %s", INFO, out_path, out_level, bampath);
+    log_msg("Reading input BAM file: %s", INFO, bampath);
     samFile *fp = sam_open(bampath, "r");
 
 
     // Extract header
-    log_message("Reading SAM header", DEBUG, out_path, out_level);
+    log_msg("Reading SAM header", DEBUG);
     sam_hdr_t *header = sam_hdr_read(fp);
 
+
     // Iterating variables for reads in the bam file
-    log_message("Create temporary read", DEBUG, out_path, out_level);
+    log_msg("Create temporary read", DEBUG);
     bam1_t *read = bam_init1();
 
     // Prepare a read-tag-to-label hash table from a metadata table
-    log_message(
-            "Loading barcode-cluster information from metadata: %s",
-            INFO, out_path, out_level,
-            metapath
-            );
+    log_msg("Loading barcode-cluster information from metadata: %s", INFO, metapath);
     struct rt2label *r2l = hash_readtag((char *) metapath);
 
     if (r2l == NULL) {
-        log_message("Failed to hash the metadata.", ERROR, out_path, out_level);
+        log_msg("Failed to hash the metadata.", ERROR);
         return 1;
     }
 
     // Prepare a label-to-file-handle hash table from the above
-    log_message("Preparing output BAM files", INFO, out_path, out_level);
+    log_msg("Preparing output BAM files", INFO);
     struct label2fp *l2fp = NULL;
     l2fp = hash_labels(r2l, oprefix, header);
 
-    log_message("Starting to split files", INFO, out_path, out_level);
+    log_msg("Starting to split files", INFO);
     // Iterate through the rt's and write to corresponding file handles.
     // Iterate through reads from input bam
     struct rt2label *lout;
@@ -226,72 +201,25 @@ int main(int argc, char *argv[]) {
 
 
     int64_t chunk_size = 1000000;
-    log_message("Processing %lld reads per batch", INFO, out_path, out_level, chunk_size);
+    log_msg("Processing %lld reads per chunk", INFO, chunk_size);
 
     // Allocate heap memory for reads to sort
-    log_message("Preparing read chunks for sorting", DEBUG, out_path, out_level);
-    sam_read *chunk;
-    chunk = malloc(sizeof(sam_read) * chunk_size);
-    if (chunk == NULL) {
-        log_message("Insufficient memory. Please decrease chunk size used (%d)",
-                    ERROR, out_path, out_level, chunk_size);
+    log_msg("Preparing read chunks for sorting", DEBUG);
+
+    sam_read *chunk = chunk_init(chunk_size);
+    if (NULL == chunk) {
         return -1;
     }
 
-    chunk_init(chunk, chunk_size);
-
-    int64_t size_retrieved = chunk_size;
-
-    int chunk_num = 0;
-    // Create temporary file dir for sorted chunks
-    char *tmpdir = create_tempdir(oprefix);
-
-    while (size_retrieved == chunk_size) {
-        chunk_num += 1;
-        log_message("Chunk #%lld filling", DEBUG, out_path, out_level, chunk_num);
-        size_retrieved = fill_chunk(fp, header, chunk, chunk_size);
-        if (size_retrieved < -1) {
-            log_message("Insufficient RN size (%d). Please increase RN size to at least %d",
-                        ERROR, out_path, out_level, RN_SIZE, -size_retrieved + 1);
-            return 1;
-        }
-        sort_chunk(chunk, size_retrieved);
-        sam_hdr_change_HD(header, "SO", "unknown");
-
-        char *tname;
-        tname = malloc(sizeof(char) * (strlen(tmpdir) + 16)); // tmp[/chunkXXXXX.bam]
-        char *uid[10];
-        strcpy(tname, tmpdir);
-        strcat(tname, "/chunk");
-        sprintf(uid, "%05d.bam", chunk_num);
-        strcat(tname, uid);
-
-        htsFile* tfp = sam_open(tname, "wb");
-        free(tname);
-
-        int write_status = sam_hdr_write(tfp, header);
-        if (write_status != 0) {
-            log_message(
-                    "Fail to write SAM header into temporary files",
-                    ERROR, out_path, out_level
-                    );
-            return 1;
-        }
-
-        int write_to_bam = 0;
-        for (int64_t i = 0; i < size_retrieved; i++) {
-            write_to_bam = sam_write1(tfp, header, chunk[i].read);
-            if (write_to_bam == -1) {
-                log_message(
-                        "Fail to write sorted reads into temporary files",
-                        ERROR, out_path, out_level
-                );
-                return 1;
-            }
-        }
-        sam_close(tfp);
+    int8_t process_stat = process_bam(
+                fp, header, chunk, chunk_size, oprefix
+            );
+    if (1 == process_stat) {
+        return -1;
     }
-    free(tmpdir);
+
+    // Done processing
+    log_msg("Completed sorting all chunks", INFO);
     chunk_destroy(chunk, chunk_size);
     free(chunk);
 

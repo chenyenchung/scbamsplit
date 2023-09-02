@@ -22,5 +22,6 @@ extern char *OUT_PATH;
 extern bool dev;
 
 
-void log_message(char* message, log_level_t level, char* log_path, log_level_t out_level, ...);
+void log_message(char* message, log_level_t level, char* log_path, log_level_t OUT_LEVEL, ...);
+#define log_msg(...) log_message(OUT_PATH, OUT_LEVEL, __VA_ARGS__)
 #endif //SCBAMSPLIT_UTILS_H
