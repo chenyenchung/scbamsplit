@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.18)
 project(scbamsplit C)
 
 set(CMAKE_C_STANDARD 99)
+
 #########
 #https://github.com/luntergroup/octopus/blob/develop/build/cmake/modules/FindHTSlib.cmake
 #########
@@ -105,6 +106,8 @@ find_path(HTSlib_INCLUDE_DIR
         NO_DEFAULT_PATH
         )
 
+
+
 if (HTSlib_USE_STATIC_LIBS)
     # Dependencies
     set(ZLIB_ROOT ${HTSLIB_ROOT})
@@ -121,8 +124,16 @@ if (HTSlib_USE_STATIC_LIBS)
     endif()
     set(HTSlib_LIBRARY_names libhts.a)
 else()
-    set(HTSlib_LIBRARY_names libhts.so libhts.so.2 libhts.dylib libhts.2.dylib)
+    set(HTSlib_LIBRARY_names libhts.so.3 libhts.so.2 libhts.so libhts.3.dylib libhts.2.dylib libhts.dylib)
 endif()
+
+# rpath dir
+find_path(HTSlib_LIB_DIR
+        NAMES ${HTSlib_LIBRARY_names}
+        PATHS ${HTSlib_INCLUDE_DIR} ${HTSLIB_SEARCH_DIRS} ${HTSLIB_PKGCONF_LIBRARY_DIRS}
+        NO_DEFAULT_PATH
+        PATH_SUFFIXES lib lib64 lib/x86_64-linux-gnu lib/aarch64-linux-gnu ${_htslib_ver_path}
+)
 
 # Finally the library itself
 find_library(HTSlib_LIBRARY
@@ -156,8 +167,16 @@ endif()
 
 libfind_process(HTSlib)
 
+# the RPATH to be used when installing, but only if it's not a system directory
+list(APPEND CMAKE_BUILD_RPATH ${HTSlib_LIB_DIR})
+set(CMAKE_INSTALL_RPATH "${CMAKE_BUILD_RPATH}")
+
+message(STATUS "   Building with ${CMAKE_BUILD_TYPE} configuration...")
 message(STATUS "   HTSlib include dirs: ${HTSlib_INCLUDE_DIRS}")
 message(STATUS "   HTSlib libraries: ${HTSlib_LIBRARIES}")
+message(STATUS "   HTSlib link path: ${HTSlib_LIB_DIR}")
+message(STATUS "   CMake Build Rpath: ${CMAKE_BUILD_RPATH}")
+message(STATUS "   CMake Install Rpath: ${CMAKE_INSTALL_RPATH}")
 
 #########
 # add extra include directories
@@ -168,6 +187,5 @@ add_executable(scbamsplit
         src/sort.c)
 target_include_directories(scbamsplit PUBLIC ${HTSlib_INCLUDE_DIRS})
 target_link_libraries(scbamsplit ${HTSlib_LIBRARIES})
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O0")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O0")
-set(CMAKE_BUILD_TYPE Debug)
+
+install(TARGETS scbamsplit DESTINATION bin)
