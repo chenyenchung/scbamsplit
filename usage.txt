@@ -1,0 +1,26 @@
+
+Usage: scbamsplit -f path -m path
+Options:
+    Generic:
+        [-o path] [-q MAPQ] [-d] [-r read name length] [-M memory usage (in GB)] [-n] [-v (verbosity)] [-h]
+    CBC/UMI related:
+        [-p platform] [-b CBC tag/field] [-L CBC length] [-u UMI tag/field] [-l UMI length]
+
+    -f/--file: the path for input bam file
+    -m/--meta: the path for input metadata an unquoted two-column csv with column names)
+    -o/--output: the path to export bam files to default: ./)
+    -q/--mapq: Minimal MAPQ threshold for output default: 0)
+    -p/--platform: Pre-fill locations and lengths for CBC and UMI (Supported platform: 10Xv2, 10Xv3, sciRNAseq3
+         (e.g., for 10Xv3, both are stored as read tags. CBC is 16 mers tagged CB, while UMI is 12mers tagged UB).
+    -d/--dedup: Remove duplicated reads with the same cell barcode/UMI combination
+    -b/--cbc-location: If CBC is a read tag, provide the name (e.g., CB); if it is in the read name,
+         provide the field number (e.g., 3) (default: CB)
+    -L/--cbc-length: The length of the barcode you want to filter against (default: 20)
+    -u/--umi-location: If UMI is a read tag, provide the name (e.g., UB); if it is in the read name,
+        provide the field number (e.g., 3) (default: CB)
+    -l/--umi-length: The length of the UMI default: 20)
+    -r/--rn-length: The length of the read name (default: 48)
+    -M/--mem: The estimated maximum amount of memory to use (In GB, default: 4)
+    -n/--dry-run: Only print out parameters
+    -v/--verbose: Set verbosity level (1 - 5) (default: 2, 3 if -v provided without a value)
+    -h/--help: Show this documentation
