@@ -1,8 +1,9 @@
 cmake_minimum_required(VERSION 3.18)
 project(scbamsplit C)
+include(CheckIPOSupported)
 
 set(CMAKE_C_STANDARD 99)
-
+set(CMAKE_BUILD_TYPE Release)
 #########
 #https://github.com/luntergroup/octopus/blob/develop/build/cmake/modules/FindHTSlib.cmake
 #########
@@ -167,9 +168,13 @@ endif()
 
 libfind_process(HTSlib)
 
-# the RPATH to be used when installing, but only if it's not a system directory
 list(APPEND CMAKE_BUILD_RPATH ${HTSlib_LIB_DIR})
 set(CMAKE_INSTALL_RPATH "${CMAKE_BUILD_RPATH}")
+
+## Check if compiler supports inter-procedural optimization
+## https://stackoverflow.com/questions/31355692/how-do-i-enable-link-time-optimization-lto-with-cmake
+check_ipo_supported(RESULT IPO_SUPPORT OUTPUT IPO_ERROR)
+
 
 message(STATUS "   Building with ${CMAKE_BUILD_TYPE} configuration...")
 message(STATUS "   HTSlib include dirs: ${HTSlib_INCLUDE_DIRS}")
@@ -180,12 +185,21 @@ message(STATUS "   CMake Install Rpath: ${CMAKE_INSTALL_RPATH}")
 
 #########
 # add extra include directories
-add_executable(scbamsplit
+add_executable(${PROJECT_NAME}
         src/main.c
         src/hash.c
         src/utils.c
         src/sort.c)
-target_include_directories(scbamsplit PUBLIC ${HTSlib_INCLUDE_DIRS})
-target_link_libraries(scbamsplit ${HTSlib_LIBRARIES})
+if ( IPO_SUPPORT )
+    if (NOT CMAKE_BUILD_TYPE MATCHES "Debug")
+        message(STATUS "Enabling link-time optimization")
+        # Using link-time optimization prevents setting breakpoints for debugging
+        set_property(TARGET ${PROJECT_NAME} PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
+    endif()
+else()
+    message(STATUS "IPO not supported")
+endif()
+target_include_directories(${PROJECT_NAME} PUBLIC ${HTSlib_INCLUDE_DIRS})
+target_link_libraries(${PROJECT_NAME} ${HTSlib_LIBRARIES})
 
-install(TARGETS scbamsplit DESTINATION bin)
+install(TARGETS ${PROJECT_NAME} DESTINATION bin)

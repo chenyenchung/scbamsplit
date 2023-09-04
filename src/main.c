@@ -14,56 +14,61 @@
 
 // Dealing with global vars
 char *OUT_PATH = "";
-log_level_t OUT_LEVEL = DEBUG;
-uint16_t KEY_SIZE = 512;
-uint16_t RN_SIZE = 48;
-uint8_t CB_LENGTH = 20;
-uint8_t UB_LENGTH = 20;
-
-int64_t chunk_size = 500000;
-
-bool dev = true;
+// Length of LEVEL_FALG is HARD-CODED in log_message() that must be updated if more levels
+// Are added
+char *LEVEL_FLAG[] = {"ERROR", "WARNING", "", "INFO", "", "DEBUG"};
+log_level_t OUT_LEVEL = WARNING;
+int64_t KEY_SIZE = 512;
+int64_t RN_SIZE = 71;
+int64_t CB_LENGTH = 21;
+int64_t UB_LENGTH = 21;
+int64_t chunk_size = 500000; // Approximately 1GB
 
 int main(int argc, char *argv[]) {
     // Use a flag to bypass commandline input during development
 
-    int opt;
-    uint16_t mapq_thres = 0;
-    char *mapqstr = NULL;
+    int32_t opt;
+    char* current_opt;
+    int64_t mapq_thres = 0;
+    int64_t out_level_raw = 0;
+    int64_t mem_scale = 4;
     bool dedup = false, dryrun = false, verbose = false;
     char *bampath = NULL;
     char *metapath = NULL;
     char *oprefix = NULL;
-    char filter_tag[3] = "CB";
+    tag_meta_t *cb_meta = initialize_tag_meta();
+    tag_meta_t *ub_meta = initialize_tag_meta();
+    strcpy(ub_meta->tag_name, "UB");
+    int64_t cb_field = 0;
+    int64_t ub_field = 0;
+    char bc_tag[3] = "CB";
     char umi_tag[3] = "UB";
+    int32_t return_val = 0;
 
     // Commandline argument processing
     static struct option cl_opts[] = {
-            {"dedup", no_argument, NULL, 'd'},
-            {"mapq", required_argument, NULL, 'q'},
             {"file", required_argument, NULL, 'f'},
             {"meta", required_argument, NULL, 'm'},
             {"output", required_argument, NULL, 'o'},
-            {"filter-tag", required_argument, NULL, 't'},
-            {"umi-tag", required_argument, NULL, 'u'},
+            {"mapq", required_argument, NULL, 'q'},
+            {"platform", required_argument, NULL, 'p'},
+            {"dedup", no_argument, NULL, 'd'},
+            {"cbc-location", required_argument, NULL, 'b'},
+            {"cbc-length", required_argument, NULL, 'L'},
+            {"umi-location", required_argument, NULL, 'u'},
+            {"umi-length", required_argument, NULL, 'l'},
+            {"rn-length", required_argument, NULL, 'r'},
+            {"mem", required_argument, NULL, 'M'},
             {"dry-run", no_argument, NULL, 'n'},
-            {"verbose", no_argument, NULL, 'v'},
+            {"verbose", optional_argument, NULL, 'v'},
             {"help", no_argument, NULL, 'h'}
     };
 
     log_msg("Parsing commandline flags", DEBUG);
-
-
-    while ((opt = getopt_long(argc, argv, ":dq:f:m:o:t:u:nvh", cl_opts, NULL)) != -1) {
+//    ":dq:f:m:o:b:l:u:i:nr:M:v::h"
+    while ((opt = getopt_long(argc, argv, ":f:m:o:q:p:db:L:u:l:r:M:nv:h", cl_opts, NULL)) != -1) {
+        current_opt = argv[optind - 1];
         switch (opt) {
-            case 'd':
-                dedup = true;
-                break;
-            case 'q':
-                if (optarg != NULL) {
-                    mapq_thres = strtol(optarg, &mapqstr, 10);
-                }
-                break;
             case 'f':
                 bampath = optarg;
                 break;
@@ -73,50 +78,109 @@ int main(int argc, char *argv[]) {
             case 'o':
                 oprefix = optarg;
                 break;
-            case 't':
-                for (int i = 0; i < 2; i++) {
-                    filter_tag[i] = optarg[i];
+            case 'q':
+                // If optarg is not a number, it will default to 0...
+                mapq_thres = strtol(optarg, NULL, 10);
+                break;
+            case 'p':
+                set_CB(cb_meta, optarg);
+                set_UB(ub_meta, optarg);
+                CB_LENGTH = cb_meta->length;
+                UB_LENGTH = ub_meta->length;
+                break;
+            case 'd':
+                dedup = true;
+                break;
+            case 'b':
+                cb_field = strtol(optarg, NULL, 10);
+                if (cb_field == 0) {
+                    strncpy(cb_meta->tag_name, optarg, 2);
+                } else {
+                    cb_meta->location = READ_NAME;
+                    cb_meta->field = cb_field;
+                }
+                break;
+            case 'L':
+                CB_LENGTH = strtol(optarg, NULL, 10) + 1;
+                if (CB_LENGTH != 0) {
+                    cb_meta->length = CB_LENGTH;
+                } else {
+                    log_msg("Cell barcode length must be larger than 0", ERROR);
+                    goto error_out_and_free;
                 }
                 break;
             case 'u':
-                for (int i = 0; i < 2; i++) {
-                    umi_tag[i] = optarg[i];
+                ub_field = strtol(optarg, NULL, 10);
+                if (ub_field == 0) {
+                    strncpy(ub_meta->tag_name, optarg, 2);
+                } else {
+                    ub_meta->location = READ_NAME;
+                    ub_meta->field = ub_field;
                 }
                 break;
-            case 'v':
-                verbose = true;
+            case 'l':
+                UB_LENGTH = strtol(optarg, NULL, 10) + 1;
+                if (UB_LENGTH > 0) {
+                    ub_meta->length = UB_LENGTH;
+                } else {
+                    log_msg("UMI length must be larger than 0", ERROR);
+                    goto error_out_and_free;
+                }
+                break;
+            case 'r':
+                RN_SIZE = strtol(optarg, NULL, 10) + 1;
+                if (RN_SIZE <= 1) {
+                    log_msg("Read name length must be larger than 0", ERROR);
+                    goto error_out_and_free;
+                }
+                break;
+            case 'M':
+                mem_scale = strtol(optarg, NULL, 10);
+                if (mem_scale < 1) {
+                    log_msg("Memory limit (-M/--mem) must be an integer and >= 1", ERROR);
+                    goto error_out_and_free;
+                }
                 break;
             case 'n':
                 dryrun = true;
                 break;
+            case 'v':
+                out_level_raw = strtol(optarg, NULL, 10);
+                verbose = true;
+                if (out_level_raw == 0) {
+                    OUT_LEVEL = INFO;
+                } else if (out_level_raw > 0 && out_level_raw < 5) {
+                    OUT_LEVEL = out_level_raw;
+                } else {
+                    OUT_LEVEL = DEBUG;
+                }
+                break;
             case 'h':
-                show_usage("regular");
+                show_usage();
                 return 0;
             case ':':
-                show_usage("missing");
-                return 1;
-            case '?':
-                show_usage("unknown");
-                return 1;
+                if (strcmp(current_opt, "-v") == 0) {
+                    verbose = true;
+                    OUT_LEVEL = INFO;
+                    break;
+                }
+                log_msg("%s must be provided with a value", ERROR, current_opt);
+                log_msg("Please see \"scbamsplit --help\" for details", ERROR);
+                goto error_out_and_free;
             default:
-                show_usage("regular");
+                log_msg("%s is not a valid option", ERROR, current_opt);
+                log_msg("Please see \"scbamsplit --help\" for details", ERROR);
+                error_out_and_free:
+                    destroy_tag_meta(cb_meta);
+                    destroy_tag_meta(ub_meta);
                 return 1;
         }
-    }
-
-    // Bypass input for testing during development
-    if (dev) {
-        log_msg("Dev mode on: Bypassing command line input", DEBUG);
-        bampath = "../data/test.bam";
-        metapath = "../data/test.txt";
-        oprefix = "./huge_out/";
-        dedup = true;
     }
 
     // Error-out if missing arguments
     if (bampath == NULL || metapath == NULL) {
         log_msg("Error: Missing required arguments", ERROR);
-        show_usage("regular");
+        log_msg("Please see \"scbamsplit --help\" for details", ERROR);
         return 1;
     }
 
@@ -125,20 +189,33 @@ int main(int argc, char *argv[]) {
         oprefix = "./";
     }
 
+    // Set chunk size by mem estimation
+    chunk_size = chunk_size * mem_scale;
+
     // If the output prefix does not end with /, add it.
     uint16_t oplen = strlen(oprefix) - 1;
-    if (oprefix[oplen] != '/')
+    if (oprefix[oplen] != '/') {
         oprefix = strcat(oprefix, "/");
+    }
 
+    if (mapq_thres > 254) {
+        fprintf(stderr, "Please note that the maximal value of MAPQ is 255.\n");
+        fprintf(stderr, "There is no read that would have MAPQ **ABOVE** the current threshold (%lld) and be kept.\n",
+                mapq_thres);
+        return 1;
+    }
 
     if (verbose || dryrun) {
-        fprintf(stderr, "- Run condition:\n\n");
+        fprintf(stderr, "- Run condition:\n");
         fprintf(stderr, "\tInput bam: %s\n", bampath);
         fprintf(stderr, "\tInput metadata: %s\n", metapath);
-        fprintf(stderr, "\tMAPQ threshold: %d\n", mapq_thres);
-        fprintf(stderr, "\tRead tag to filter: %s\n", filter_tag);
-        fprintf(stderr, "\tUMI tag to filter: %s\n", umi_tag);
+        fprintf(stderr, "\tMAPQ threshold: %lld\n", mapq_thres);
+        fprintf(stderr, "\tRead name length: %lldmer\n", RN_SIZE - 1);
         fprintf(stderr, "\tOutput prefix: %s\n", oprefix);
+        fprintf(stderr, "\tMemory usage is estimated to be: %lldGB\n", mem_scale);
+        fprintf(stderr, "\tLogging level is %d\n", OUT_LEVEL);
+        print_tag_meta(cb_meta, "Cell barcode");
+        print_tag_meta(ub_meta, "UMI");
         if (dedup) {
             fprintf(stderr, "\tRunning **with** deduplication.\n\n");
         } else {
@@ -146,10 +223,13 @@ int main(int argc, char *argv[]) {
         }
     }
 
+
     if (dryrun) {
         fprintf(stderr, "\t==========================================================\n");
         fprintf(stderr, "\t= This is a dry-run (-n/--dry-run). Nothing is executed. =\n");
         fprintf(stderr, "\t==========================================================\n");
+        destroy_tag_meta(cb_meta);
+        destroy_tag_meta(ub_meta);
         return 0;
     }
 
@@ -164,7 +244,6 @@ int main(int argc, char *argv[]) {
     } else if (-1 == mkdir_status) {
         return 1;
     }
-
 
     ////////// bam related //////////////////////////////////////////////
     // Open input bam file from CellRanger
@@ -202,25 +281,25 @@ int main(int argc, char *argv[]) {
     label2fp *fout;
     int32_t read_stat;
 
+
     if (!dedup) {
         char *current_CB;
         char *this_CB;
         char *this_UB;
-        current_CB = (char *) malloc(sizeof(char) * CB_LENGTH);
-        this_CB = (char *) malloc(sizeof(char) * CB_LENGTH);
-        this_UB = (char *) malloc(sizeof(char) * UB_LENGTH);
+        current_CB = (char *) calloc(CB_LENGTH, sizeof(char));
+        this_CB = (char *) calloc(CB_LENGTH, sizeof(char));
+        this_UB = (char *) calloc(UB_LENGTH, sizeof(char));
         while (0 <= (read_stat = sam_read1(fp, header, read))) {
             // Get read metadata
-            int8_t cb_stat = get_CB(read, filter_tag, this_CB);
-            int8_t ub_stat = get_UB(read, umi_tag, this_UB);
-            int16_t mapq = (read)->core.qual;
-            mapq = mapq == NULL?0:mapq;
+            int8_t ub_stat = get_UB(read, ub_meta, this_UB);
+            int8_t cb_stat = get_CB(read, cb_meta, this_CB);
+            int16_t mapq = read->core.qual;
+
             if (-1 == cb_stat || -1 == ub_stat || mapq < mapq_thres) {
                 // Ignore reads without CB and UMI for consistency
                 continue;
             }
             // Exporting process
-//            int8_t rdump_stat = read_dump(r2l, lout, l2fp, fout, this_CB, header, read);
             int8_t rdump_stat = rdump(this_CB, header, read);
             if (0 != rdump_stat) {
                 log_msg("Fail to write sorted reads to individual BAM file (%s)", ERROR, lout->label);
@@ -241,12 +320,15 @@ int main(int argc, char *argv[]) {
 
         sam_read_t **chunk = chunk_init(chunk_size);
         if (NULL == chunk) {
-            return -1;
+            return_val = 1;
+            goto early_exit;
         }
 
-        char* tmpdir = process_bam(fp, header, chunk, chunk_size, oprefix, mapq_thres);
+        char* tmpdir = process_bam(fp, header, chunk, chunk_size, oprefix, mapq_thres, cb_meta, ub_meta);
         if (strcmp(tmpdir, "1") == 0) {
-            return -1;
+            return_val = 1;
+            chunk_destroy(chunk, chunk_size);
+            goto early_exit;
         }
 
         // Done processing
@@ -256,18 +338,18 @@ int main(int argc, char *argv[]) {
         char * sorted_path = merge_bams(tmpdir);
 
         // Deduped-split
-        sam_close(fp);
-        bam_hdr_destroy(header);
-
         log_msg("Open sorted file (%s) to split", INFO, sorted_path);
 
-        int8_t dump_stat = ddump(tmpdir, sorted_path, read, filter_tag, umi_tag);
+        int8_t dump_stat = ddump(tmpdir, sorted_path, read, bc_tag, umi_tag, cb_meta, ub_meta);
         if (1 == dump_stat) {
             log_msg("Please check the output folder to remove remaining temporary folder", WARNING);
         }
     }
 
-    // Close file handles
+    // Release and exit
+early_exit:
+    sam_close(fp);
+    bam_hdr_destroy(header);
     label2fp *qs, *qtmp;
     HASH_ITER(hh, l2fp, qs, qtmp) {
         sam_close(qs->fp);
@@ -282,9 +364,10 @@ int main(int argc, char *argv[]) {
         free(s);
     }
 
-
     // Free temporary read
     bam_destroy1(read);
+    destroy_tag_meta(cb_meta);
+    destroy_tag_meta(ub_meta);
 
-    return 0;
+    return return_val;
 }

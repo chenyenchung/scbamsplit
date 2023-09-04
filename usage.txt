@@ -19,7 +19,7 @@ Options:
     -u/--umi-location: If UMI is a read tag, provide the name (e.g., UB); if it is in the read name,
         provide the field number (e.g., 3) (default: CB)
     -l/--umi-length: The length of the UMI default: 20)
-    -r/--rn-length: The length of the read name (default: 48)
+    -r/--rn-length: The length of the read name (default: 70)
     -M/--mem: The estimated maximum amount of memory to use (In GB, default: 4)
     -n/--dry-run: Only print out parameters
     -v/--verbose: Set verbosity level (1 - 5) (default: 2, 3 if -v provided without a value)

@@ -4,27 +4,12 @@
 #include "sort.h"
 #include <string.h>
 #include <stdbool.h>
+#include <ctype.h>
 #include "htslib/sam.h" /* include stdint.h with it */
 #include "htslib/kstring.h"
 #include "utils.h"
 
-#define FREE_FILL_CHUNK bam_destroy1(temp_read); free(PR); free(MAPQ); free(UB); free(CB); free(RN)
-
-// TODO: Is it possible to compress the reads in-memory?
-// Possibility:
-// 1. bam_read1() calls bgzf_read(), which reads both compressed and uncompressed data as a BGZF*
-//   - It seems that inflation is not as resource intensive (~3% CPU time with current implementation).
-// 2. bam_write1() probably calls bgzf_write() which in turn uses lazy_flush().
-//   - lazy_flush() calls bgzf_flush(), which occupies ~75% CPU time.
-//   - Most time is spent over bgzf_compress().
-// 3. If we can piggyback on bgzf_read to keep compressed data block in RAM in merging, and bypass further
-//    bgzf_compress, this should achieve 2X - 3X speed up.
-//   - fill_block() will still require bam_read1() to construct sorting key, but in principle, the array could
-//     be stored in ram as [key][bgzf-compressed block]? This would also decrease mem usage for sorting.
-//   - In this case, temporary files can be custom binary which [key][bgzf-compressed read data], and are read
-//     as compressed & only getting the key (which is fixed-length).
-
-int8_t get_tag(bam1_t *read, char* tag, char* tag_ptr) {
+int8_t fetch_tag(bam1_t *read, char *tag, char* tag_ptr) {
     // bam_aux_get_str() exists, but to return a kstring,
     // it involves realloc() and is rather slow.
     // We ask users to specify UB and CB size here, so we
@@ -38,13 +23,147 @@ int8_t get_tag(bam1_t *read, char* tag, char* tag_ptr) {
     strcpy(tag_ptr, tag_content + 1);
     return 0;
 }
-
-int8_t get_CB(bam1_t *read, char* tag, char* tag_ptr) {
-    return get_tag(read, tag, tag_ptr);
+int8_t fetch_tag2(bam1_t *read, char* tag_ptr, tag_meta_t *info) {
+    // bam_aux_get_str() exists, but to return a kstring,
+    // it involves realloc() and is rather slow.
+    // We ask users to specify UB and CB size here, so we
+    // should take advantage of this information to gain
+    // some efficiency.
+    char* tag_content = (char *) bam_aux_get(read, info->tag_name);
+    if (NULL == tag_content) {
+        // Tag not found
+        return -1;
+    }
+    strncpy(tag_ptr, tag_content + 1, info->length - 1);
+    return 0;
 }
 
-int8_t get_UB(bam1_t *read, char* tag, char* tag_ptr) {
-    return get_tag(read, tag, tag_ptr);
+int8_t fetch_name(bam1_t *read, char* tag_ptr, tag_meta_t *info) {
+    char* rn = bam_get_qname(read);
+
+    // Need to copy -- strtok will modify the string
+    char *rncpy = calloc(strlen(rn) + 1, sizeof(char));
+    strncpy(rncpy, rn, strlen(rn));
+    char *token;
+
+
+    uint8_t field_num = 0;
+    int8_t return_val = 1;
+    token = strtok(rncpy, info->sep);
+    while (token != NULL) {
+        field_num++;
+        if (field_num == info->field) {
+            strcpy(tag_ptr, token);
+            return_val = 0;
+        }
+        token = strtok(NULL, info->sep);
+    }
+    free(rncpy);
+    return return_val;
+}
+int8_t get_CB (bam1_t *read, tag_meta_t* info, char* tag_ptr) {
+    int8_t exit_code = 0;
+    switch (info->location) {
+        case READ_TAG:
+            fetch_tag2(read, tag_ptr, info);
+            break;
+        case READ_NAME:
+            fetch_name(read, tag_ptr, info);
+            break;
+        default:
+            log_msg("Unknown location type to fetch cell barcode", ERROR);
+            exit_code = 1;
+    }
+    return exit_code;
+}
+int8_t get_UB (bam1_t *read, tag_meta_t* info, char* tag_ptr) {
+    int8_t exit_code = 0;
+    switch (info->location) {
+        case READ_TAG:
+            fetch_tag2(read, tag_ptr, info);
+            break;
+        case READ_NAME:
+            fetch_name(read, tag_ptr, info);
+            break;
+        default:
+            log_msg("Unknown location type to fetch cell barcode", ERROR);
+            exit_code = 1;
+    }
+    return exit_code;
+}
+
+
+tag_meta_t *initialize_tag_meta() {
+    // Allocate
+    tag_meta_t *tag_meta;
+    tag_meta = calloc(1, sizeof(tag_meta_t));
+    tag_meta->tag_name = calloc(3, sizeof(char));
+    tag_meta->sep = calloc(2, sizeof(char));
+
+    // Set initial values
+    tag_meta->location = READ_TAG;
+    strcpy(tag_meta->tag_name, "CB");
+    strcpy(tag_meta->sep, ",");
+    tag_meta->field = 1;
+    tag_meta->length = 21;
+
+    return tag_meta;
+}
+
+void destroy_tag_meta(tag_meta_t *tag_meta) {
+    free(tag_meta->sep);
+    free(tag_meta->tag_name);
+    free(tag_meta);
+}
+void print_tag_meta(tag_meta_t *tag_meta, const char *header) {
+    char* location[2] = {"Read tag", "Read name"};
+    if (NULL == header) {
+        fprintf(stderr, "Tag Information\n");
+    } else {
+        fprintf(stderr, "\t%s:\n", header);
+    }
+    fprintf(stderr, "\t\tLocation: %s\n", location[tag_meta->location]);
+    if (tag_meta->location == READ_NAME) {
+        fprintf(stderr, "\t\tSep char: %s\n", tag_meta->sep);
+        fprintf(stderr, "\t\tField number: %d\n", tag_meta->field);
+    } else {
+        fprintf(stderr, "\t\tTag name: %s\n", tag_meta->tag_name);
+    }
+    fprintf(stderr, "\t\tTag length: %d\n\n", tag_meta->length - 1);
+}
+
+void set_CB(tag_meta_t *tag_meta, char *platform) {
+    for (int8_t i = 0; i < strlen(platform); i++) {
+        platform[i] = tolower(platform[i]);
+    }
+    if (strcmp("10xv2", platform) == 0) {
+        tag_meta->length = 18 + 1;
+    } else if (strcmp("scirnaseq3", platform) == 0) {
+        tag_meta->location = READ_NAME;
+        tag_meta->length = 20 + 1;
+        tag_meta->field = 1;
+    } else {
+        // Default (platform == NULL) is 10Xv3
+        tag_meta->length = 18 + 1;
+    }
+}
+
+void set_UB(tag_meta_t *tag_meta, char *platform) {
+    for (int8_t i = 0; i < strlen(platform); i++) {
+        platform[i] = tolower(platform[i]);
+    }
+    if (strcmp("10xv2", platform) == 0) {
+        strcpy(tag_meta->tag_name, "UB");
+        tag_meta->length = 10 + 1;
+    } else if (strcmp("scirnaseq3", platform) == 0) {
+        tag_meta->location = READ_NAME;
+        tag_meta->length = 8 + 1;
+        tag_meta->field = 2;
+    } else {
+        // Default (platform == NULL) is 10Xv3
+        strcpy(tag_meta->tag_name, "UB");
+        tag_meta->length = 12 + 1;
+    }
 }
 
 int8_t is_primary(bam1_t *read, char* flag_ptr) {
@@ -67,19 +186,13 @@ int8_t is_primary(bam1_t *read, char* flag_ptr) {
     return 0;
 }
 
-int8_t get_MAPQ(bam1_t *read, char* val_ptr) {
+void get_MAPQ(bam1_t *read, char* val_ptr) {
     uint8_t mapq = (read)->core.qual;
-    if (NULL == mapq) {
-        return 1;
-    }
     sprintf(val_ptr, "%03d", mapq);
-    return 0;
 }
 
-int64_t fill_chunk(
-        samFile *fp, sam_hdr_t *header, sam_read_t **read_array,
-        int64_t chunk_size, int16_t qthres
-        ) {
+int64_t fill_chunk(samFile *fp, sam_hdr_t *header, sam_read_t **read_array, int64_t chunk_size, int16_t qthres,
+                   tag_meta_t *cb_meta, tag_meta_t *ub_meta) {
     /**
      * @abstract Fill read buffer to designated size and return the index of next read to read or -1
      * when fails.
@@ -101,11 +214,11 @@ int64_t fill_chunk(
     char *MAPQ;
     char *PR;
     char *RN; // Declare empty string of sufficient size
-    CB = (char *) malloc(sizeof(char) * CB_LENGTH);
-    UB = (char *) malloc(sizeof(char) * UB_LENGTH);
-    MAPQ = (char *) malloc(sizeof(char) * 4); // Max value for MAPQ is 255 per SAM spec v1
-    PR = (char *) malloc(sizeof(char) * 2); // The value for primary read is either 0 or 1
-    RN = (char *) malloc(sizeof(char) * RN_SIZE);
+    CB = (char *) calloc(CB_LENGTH, sizeof(char));
+    UB = (char *) calloc(UB_LENGTH, sizeof(char));
+    MAPQ = (char *) calloc(4, sizeof(char)); // Max value for MAPQ is 255 per SAM spec v1
+    PR = (char *) calloc(2, sizeof(char)); // The value for primary read is either 0 or 1
+    RN = (char *) calloc(RN_SIZE, sizeof(char));
 
     // Fill the chunk until specified size or running out of reads
     while (read_kept < chunk_size) {
@@ -113,35 +226,34 @@ int64_t fill_chunk(
             // sam_read1 returns -1 when encountering an error
             // or EOF
             if (read_kept > 0) {
-                FREE_FILL_CHUNK;
-                return read_kept - 1;
+                read_kept--;
+                goto stop_fill_and_free;
             }
-            FREE_FILL_CHUNK;
-            return -1;
+            read_kept = -1;
+            goto stop_fill_and_free;
         }
 
-        // TODO: need to be platform compatible.
-        int8_t cb_stat = get_CB(temp_read, "CB", CB);
-        int8_t ub_stat = get_UB(temp_read, "UB", UB);
+        int8_t cb_stat = get_CB(temp_read, cb_meta, CB);
+        int8_t ub_stat = get_UB(temp_read, ub_meta, UB);
         int8_t prim_stat = is_primary(temp_read, PR);
-        int8_t mapq_stat = get_MAPQ(temp_read, MAPQ);
+        get_MAPQ(temp_read, MAPQ); // MAPQ seems to be guaranteed by SAM spec
         int16_t mapq_val = temp_read->core.qual;
 
         // Skip reads that miss CB, UB, bitwise flag, or MAPQ
-        if ((-1 == cb_stat) || (-1 == ub_stat) || (1 == prim_stat) || (1 == mapq_stat) || qthres > mapq_val) {
+        if ((-1 == cb_stat) || (-1 == ub_stat) || (1 == prim_stat) || qthres > mapq_val) {
             // If a read has no CBC or UMI, just let it go.
             continue;
         } else if (1 == cb_stat || 1 == ub_stat) {
-            // Error message is produced in get_tag()
-            FREE_FILL_CHUNK;
-            return -1;
+            // Error message is produced in fetch_tag()
+            read_kept = -1;
+            goto stop_fill_and_free;
         }
 
         bam1_t *read_copy_status = bam_copy1(read_array[read_kept]->read, temp_read);
         if (NULL == read_copy_status) {
-            log_msg( "Fail to copy a BAM read. Could please an HTSlib issue?", ERROR);
-            FREE_FILL_CHUNK;
-            return -1;
+            log_msg( "Fail to copy a BAM read. Could be an HTSlib issue?", ERROR);
+            read_kept = -1;
+            goto stop_fill_and_free;
         }
 
         // Prepare format string to pad the read name
@@ -149,7 +261,7 @@ int64_t fill_chunk(
         char fmt[16];
 
         // Get the read name to be padded to declared size - 1
-        sprintf(rn_length, "%d", RN_SIZE - 1);
+        sprintf(rn_length, "%lld", RN_SIZE - 1);
 
         // Prepare format string for sprintf padding
         strcpy(fmt, "%-");
@@ -157,10 +269,10 @@ int64_t fill_chunk(
         strcat(fmt, "s");
 
         // Pad read name
-        uint32_t obs_rn_size = strlen(bam_get_qname(temp_read));
+        int64_t obs_rn_size = strlen(bam_get_qname(temp_read));
         if (obs_rn_size > (RN_SIZE - 1)) {
-            FREE_FILL_CHUNK;
-            return -obs_rn_size;
+            read_kept = -obs_rn_size;
+            goto stop_fill_and_free;
         }
         sprintf(RN, fmt, bam_get_qname(temp_read));
 
@@ -189,10 +301,16 @@ int64_t fill_chunk(
             log_msg("Fail to append sorting key to the read (%s)",
             WARNING, read_array[read_kept]->key);
         }
-
         read_kept++;
     }
-    FREE_FILL_CHUNK;
+
+    stop_fill_and_free:
+        bam_destroy1(temp_read);
+        free(PR);
+        free(MAPQ);
+        free(UB);
+        free(CB);
+        free(RN);
     return read_kept;
 }
 
@@ -203,30 +321,38 @@ int read_cmp(const void *a, const void *b) {
     return strcmp(reada->key, readb->key);
 }
 
-int sort_chunk(sam_read_t **reads, int64_t chunk_size) {
+void sort_chunk(sam_read_t **reads, int64_t chunk_size) {
     qsort(reads, chunk_size, sizeof(sam_read_t*), read_cmp);
-    return 0;
 }
 
 sam_read_t** chunk_init(uint32_t chunk_size) {
     sam_read_t **chunk;
-    chunk = malloc(sizeof(sam_read_t*) * chunk_size);
+    chunk = calloc(chunk_size, sizeof(sam_read_t*));
 
     if (NULL == chunk) {
         log_msg("Fail to allocate memory for sorting", ERROR);
-        return NULL;
+        goto exit_without_free;
     }
 
+    uint32_t failed_iter = 0;
     for (uint32_t read_i = 0; read_i < chunk_size; read_i++) {
-        chunk[read_i] = malloc(sizeof(sam_read_t));
+        chunk[read_i] = calloc(1, sizeof(sam_read_t));
         chunk[read_i]->read = bam_init1();
-        chunk[read_i]->key = malloc(sizeof(char) * KEY_SIZE);
+        chunk[read_i]->key = calloc(KEY_SIZE, sizeof(char));
+        if (NULL == chunk[read_i] || NULL == chunk[read_i]->read || NULL == chunk[read_i]->key) {
+            failed_iter = read_i;
+            goto free_read_ptr;
+        }
     }
 
     // A HTSlib-defined BAM read contains:
     // A bam1_t struct, which also points to a bam1_core_t
-
     return chunk;
+
+    free_read_ptr:
+        chunk_destroy(chunk, failed_iter);
+    exit_without_free:
+        return NULL;
 }
 
 void chunk_destroy(sam_read_t **read_array, uint32_t chunk_size) {
@@ -238,7 +364,8 @@ void chunk_destroy(sam_read_t **read_array, uint32_t chunk_size) {
     free(read_array);
 }
 
-char* process_bam(samFile *fp, sam_hdr_t *header, sam_read_t **chunk, int64_t chunk_size, char *oprefix, int16_t qthres) {
+char *process_bam(samFile *fp, sam_hdr_t *header, sam_read_t **chunk, int64_t chunk_size, char *oprefix, int16_t qthres,
+                  tag_meta_t *cb_meta, tag_meta_t *ub_meta) {
     /**
      * @abstract Process all reads in an opened SAM/BAM file in chunks and save sorted reads in a temporary
      * directory.
@@ -256,19 +383,20 @@ char* process_bam(samFile *fp, sam_hdr_t *header, sam_read_t **chunk, int64_t ch
     // Create temporary file dir for sorted chunks
     char *tmpdir = create_tempdir(oprefix);
 
-
     while (size_retrieved == chunk_size) {
         chunk_num += 1;
         log_msg("Chunk #%lld filling", DEBUG, chunk_num);
-        size_retrieved = fill_chunk(fp, header, chunk, chunk_size, 2);
+
+        size_retrieved = fill_chunk(fp, header, chunk, chunk_size, qthres, cb_meta, ub_meta);
         if (size_retrieved < -1) {
-            log_msg("Insufficient RN size (%d). Please increase RN size to at least %d", ERROR,
-                    RN_SIZE, -size_retrieved + 1);
-            return "1";
+            log_msg("Insufficient RN size (%d).", ERROR, RN_SIZE - 1);
+            log_msg("Please increase RN size (-r/--rn-length) to at least %d", ERROR, -size_retrieved + 1);
+            goto free_tmpdir_exit;
         } else if (size_retrieved == -1) {
             // Error message is generated in fill_chunk()
-            return "1";
+            goto free_tmpdir_exit;
         }
+
         sort_chunk(chunk, size_retrieved);
         sam_hdr_change_HD(header, "SO", "unknown");
 
@@ -280,7 +408,8 @@ char* process_bam(samFile *fp, sam_hdr_t *header, sam_read_t **chunk, int64_t ch
         int write_status = sam_hdr_write(tfp, header);
         if (write_status != 0) {
             log_msg( "Fail to write SAM header into temporary files", ERROR);
-            return "1";
+            sam_close(tfp); // This has to be done in the while loop
+            goto free_tmpdir_exit;
         }
 
         int write_to_bam = 0;
@@ -288,13 +417,15 @@ char* process_bam(samFile *fp, sam_hdr_t *header, sam_read_t **chunk, int64_t ch
             write_to_bam = sam_write1(tfp, header, chunk[i]->read);
             if (write_to_bam == -1) {
                 log_msg("Fail to write sorted reads into temporary files", ERROR);
-                return "1";
+                sam_close(tfp); // This has to be done in the while loop
+                goto free_tmpdir_exit;
             }
         }
         sam_close(tfp);
-
-        // Exit early if in dev mode
-        if (dev && chunk_num > 4) break;
     }
     return tmpdir;
+
+    free_tmpdir_exit:
+        free(tmpdir);
+        return "1";
 }

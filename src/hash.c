@@ -78,7 +78,7 @@ rt2label* hash_readtag(char *path) {
         // Prepare a new element for the hash table
         rt2label *s;
         // These hash tables must be freed through iteration!
-        s = (rt2label *)malloc(sizeof(rt2label));
+        s = (rt2label *)calloc(1, sizeof(rt2label));
 
         // Assign the read tag and label as a key-value pair
         strcpy(s->rt, trt);
@@ -104,9 +104,9 @@ label2fp* hash_labels(rt2label *r2l, const char *prefix, sam_hdr_t *header) {
             continue;
         }
 
-        // If the label is new, malloc() for a new element
+        // If the label is new, calloc() for a new element
         // These hash tables must be freed through iteration!
-        new_l2f = (label2fp *)malloc(sizeof(label2fp));
+        new_l2f = (label2fp *)calloc(1, sizeof(label2fp));
 
         // Populate the label (key) for the new element
         strcpy(new_l2f->label, s->label);

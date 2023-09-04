@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include "hash.h"
 #include "htslib/sam.h"
+#include "sort.h"
 
 #ifndef SCBAMSPLIT_UTILS_H
 #define SCBAMSPLIT_UTILS_H
@@ -15,27 +16,26 @@ typedef enum {
     WARNING = 1,
     INFO = 3
 } log_level_t;
+
 void log_message(char* message, log_level_t level, char* log_path, log_level_t OUT_LEVEL, ...);
 #define log_msg(...) log_message(OUT_PATH, OUT_LEVEL, __VA_ARGS__)
+///////////////////////////////////////////////////
 
+///////////// String utilities ////////////////////
+// Defining a string array with fixed element length and number
 typedef struct {
     char **str_arr;
     uint32_t length;
     uint16_t str_length;
 } str_vec_t;
-///////////////////////////////////////////////////
-
-///////////// String utilities ////////////////////
 
 str_vec_t* str_vec_init (int64_t n, uint16_t str_len);
-int8_t str_vec_free(str_vec_t *ptr);
-
+int8_t str_vec_destroy(str_vec_t *ptr);
 ///////////////////////////////////////////////////
 
-int show_usage(const char* type);
+void show_usage();
 int create_directory(char* pathname);
 char * create_tempdir(char *dir);
-int8_t purge_tempdir(char *tmpdir);
 str_vec_t * get_bams(char *tmpdir);
 char * tname_init(char * tmpdir, char * prefix, int32_t uid_length, uint32_t oid);
 char * merge_bams(char * tmpdir);
@@ -43,22 +43,11 @@ char * merge_bams(char * tmpdir);
 int8_t read_dump(rt2label *r2l, rt2label *lout,
                  label2fp *l2fp, label2fp *fout,
                  char * this_CB, sam_hdr_t *header, bam1_t *read);
-int8_t deduped_dump(rt2label *r2l, rt2label *lout, label2fp *l2fp, label2fp *fout,
-                    char* tmpdir, char *sorted_path, bam1_t *read,
-                    char* filter_tag, char* umi_tag);
+int8_t deduped_dump(rt2label *r2l, rt2label *lout, label2fp *l2fp, label2fp *fout, char *tmpdir, char *sorted_path,
+                    bam1_t *read, char *bc_tag, char *umi_tag, tag_meta_t *cb_meta, tag_meta_t *ub_meta);
 
-#define EARLY_EXIT_MERGE free(key1); \
-free(key2); \
-bam_destroy1(r1); \
-bam_destroy1(r2); \
-sam_hdr_destroy(header1); \
-sam_hdr_destroy(header2); \
-sam_close(fp1); \
-sam_close(fp2); \
-sam_close(tfp); \
-free(ff1); \
-free(ff2);
 extern log_level_t OUT_LEVEL;
 extern char *OUT_PATH;
 extern bool dev;
+extern char* LEVEL_FLAG[6];
 #endif //SCBAMSPLIT_UTILS_H
