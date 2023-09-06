@@ -3,6 +3,7 @@
 #include <stdio.h>   /* printf */
 #include <getopt.h>  /* getopt */
 #include <stdbool.h> /* Define boolean type */
+#include <unistd.h>
 #include "htslib/sam.h" /* Use htslib to interact with bam files, imports stdint.h as well */
 #include "uthash.h"  /* hash table */
 #include "hash.h"    /* Defining the hash tables actually used */
@@ -22,7 +23,8 @@ int64_t KEY_SIZE = 512;
 int64_t RN_SIZE = 71;
 int64_t CB_LENGTH = 21;
 int64_t UB_LENGTH = 21;
-int64_t chunk_size = 500000; // Approximately 1GB
+int64_t chunk_size = 400000; // Approximately 1GB
+int64_t MAX_THREADS = 1;
 
 int main(int argc, char *argv[]) {
     // Use a flag to bypass commandline input during development
@@ -59,6 +61,7 @@ int main(int argc, char *argv[]) {
             {"umi-length", required_argument, NULL, 'l'},
             {"rn-length", required_argument, NULL, 'r'},
             {"mem", required_argument, NULL, 'M'},
+            {"threads", required_argument, NULL, '@'},
             {"dry-run", no_argument, NULL, 'n'},
             {"verbose", optional_argument, NULL, 'v'},
             {"help", no_argument, NULL, 'h'}
@@ -66,7 +69,7 @@ int main(int argc, char *argv[]) {
 
     log_msg("Parsing commandline flags", DEBUG);
 //    ":dq:f:m:o:b:l:u:i:nr:M:v::h"
-    while ((opt = getopt_long(argc, argv, ":f:m:o:q:p:db:L:u:l:r:M:nv:h", cl_opts, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, ":f:m:o:q:p:db:L:u:l:r:M:@:nv:h", cl_opts, NULL)) != -1) {
         current_opt = argv[optind - 1];
         switch (opt) {
             case 'f':
@@ -141,6 +144,12 @@ int main(int argc, char *argv[]) {
                     goto error_out_and_free;
                 }
                 break;
+            case '@':
+                MAX_THREADS = strtol(optarg, NULL, 10);
+                if (MAX_THREADS == 0) {
+                    MAX_THREADS = 1;
+                }
+                break;
             case 'n':
                 dryrun = true;
                 break;
@@ -190,7 +199,7 @@ int main(int argc, char *argv[]) {
     }
 
     // Set chunk size by mem estimation
-    chunk_size = chunk_size * mem_scale;
+    chunk_size = chunk_size * mem_scale / MAX_THREADS;
 
     // If the output prefix does not end with /, add it.
     uint16_t oplen = strlen(oprefix) - 1;
@@ -255,6 +264,7 @@ int main(int argc, char *argv[]) {
     // Extract header
     log_msg("Reading SAM header", DEBUG);
     sam_hdr_t *header = sam_hdr_read(fp);
+    if (dedup) sam_hdr_change_HD(header, "SO", "scbamsplit");
 
 
     // Iterating variables for reads in the bam file
@@ -309,8 +319,6 @@ int main(int argc, char *argv[]) {
         free(current_CB);
         free(this_CB);
         free(this_UB);
-        bam_hdr_destroy(header);
-        sam_close(fp);
     } else {
         // Deduplication-specific code
         log_msg("Processing %lld reads per chunk", INFO, chunk_size);
@@ -318,22 +326,30 @@ int main(int argc, char *argv[]) {
         // Allocate heap memory for reads to sort
         log_msg("Preparing read chunks for sorting", DEBUG);
 
-        sam_read_t **chunk = chunk_init(chunk_size);
-        if (NULL == chunk) {
-            return_val = 1;
-            goto early_exit;
+        sam_read_t **chunk[MAX_THREADS];
+        for (int i = 0; i < MAX_THREADS; i ++) {
+            chunk[i] = chunk_init(chunk_size);
+            if (NULL == chunk[i]) {
+                return_val = 1;
+                goto early_exit;
+            }
         }
+
 
         char* tmpdir = process_bam(fp, header, chunk, chunk_size, oprefix, mapq_thres, cb_meta, ub_meta);
         if (strcmp(tmpdir, "1") == 0) {
             return_val = 1;
-            chunk_destroy(chunk, chunk_size);
+            for (int i = 0; i < MAX_THREADS; i++) {
+                chunk_destroy(chunk[i], chunk_size);
+            }
             goto early_exit;
         }
 
         // Done processing
         log_msg("Completed sorting all chunks", INFO);
-        chunk_destroy(chunk, chunk_size);
+        for (int i = 0; i < MAX_THREADS; i++) {
+            chunk_destroy(chunk[i], chunk_size);
+        }
 
         char * sorted_path = merge_bams(tmpdir);
 

@@ -15,6 +15,7 @@
 #include <errno.h>
 #include <dirent.h>
 #include <unistd.h>
+#include <pthread.h>
 
 
 uint64_t max_strlen(char **strarr);
@@ -45,6 +46,7 @@ void show_usage() {
     fprintf(stderr, "    -l/--umi-length: The length of the UMI default: 20)\n");
     fprintf(stderr, "    -r/--rn-length: The length of the read name (default: 70)\n");
     fprintf(stderr, "    -M/--mem: The estimated maximum amount of memory to use (In GB, default: 4)\n");
+    fprintf(stderr, "    -@/--threads: Setting the number of threads to use (default: 1)\n");
     fprintf(stderr, "    -n/--dry-run: Only print out parameters\n");
     fprintf(stderr, "    -v/--verbose: Set verbosity level (1 - 5) (default: 2, 3 if -v provided without a value)\n");
     fprintf(stderr, "    -h/--help: Show this documentation\n");
@@ -288,6 +290,16 @@ char * tname_init(char * tmpdir, char * prefix, int32_t uid_length, uint32_t oid
     return name;
 }
 
+typedef struct {
+    char *tmpdir;
+    char **farray;
+    uint32_t oid;
+    char *prefix;
+    int32_t n;
+    int8_t free_id;
+    bool *avail;
+} mnway_args;
+
 int8_t merge_bam_nway(char *tmpdir, char **farray, uint32_t oid, char *prefix, int32_t n) {
     char **ffarray = calloc(n, sizeof(char*));
     samFile **fpa = calloc(n, sizeof(samFile*));
@@ -395,6 +407,13 @@ int8_t merge_bam_nway(char *tmpdir, char **farray, uint32_t oid, char *prefix, i
     return return_val;
 }
 
+void* pmerge_bam_nway(void *args) {
+    mnway_args *cargs = (mnway_args*) args;
+    merge_bam_nway(cargs->tmpdir, cargs->farray, cargs->oid, cargs->prefix, cargs->n);
+    cargs->avail[cargs->free_id] = true;
+    return NULL;
+}
+
 char* merge_bams(char * tmpdir) {
     int64_t remaining = count_files(tmpdir);
     char *parray[] = {
@@ -414,35 +433,80 @@ char* merge_bams(char * tmpdir) {
     // round a will be merged first in round b if left to the next round
     // in a previous round with odd # of members
     long_prefix = calloc(9, sizeof(char));
+    bool* avail;
+    avail = calloc(MAX_THREADS, sizeof(bool));
+    pthread_t *thread_ptrs;
+    thread_ptrs = (pthread_t*) calloc(MAX_THREADS, sizeof(pthread_t));
+    mnway_args *arg_ptrs = calloc(MAX_THREADS, sizeof(mnway_args));
     while (remaining > 1) {
         str_vec_t *bam_vec = get_bams(tmpdir);
         strcpy(long_prefix, "merged");
         strcat(long_prefix, parray[mround % 26]);
 
-        uint32_t batch_size = 6;
+        uint32_t batch_size = 8;
         uint32_t processed_size = 0;
         uint32_t oid = 0;
         uint32_t residual_size = 0;
+        int8_t free_id = 0;
 
-        if (bam_vec->length < batch_size) {
+        if (bam_vec->length <= batch_size) {
             merge_bam_nway(tmpdir, bam_vec->str_arr, 1, long_prefix, bam_vec->length);
         } else {
+            set_bool(avail, MAX_THREADS, true);
             while (processed_size < bam_vec->length) {
-                residual_size = bam_vec->length - processed_size;
-                if (residual_size < batch_size) batch_size = residual_size;
-                merge_bam_nway(tmpdir, &(bam_vec->str_arr[processed_size]),
-                               oid, long_prefix, batch_size);
-                oid++;
-                processed_size += batch_size;
+                if (MAX_THREADS == 1) {
+                    residual_size = bam_vec->length - processed_size;
+                    if (residual_size < batch_size) batch_size = residual_size;
+
+                    merge_bam_nway(tmpdir, &(bam_vec->str_arr[processed_size]), oid, long_prefix, batch_size);
+
+                    oid++;
+                    processed_size += batch_size;
+                } else {
+                    if (count_true(avail, MAX_THREADS) > 0) {
+                        residual_size = bam_vec->length - processed_size;
+                        free_id = find_avail(avail, MAX_THREADS);
+                    } else {
+                        free_id = 0;
+                    }
+                    if (NULL != (void*) thread_ptrs[free_id]) pthread_join(thread_ptrs[free_id], NULL);
+                    if (residual_size < batch_size) batch_size = residual_size;
+                    arg_ptrs[free_id] = (mnway_args){
+                            .tmpdir = tmpdir,
+                            .farray = &(bam_vec->str_arr[processed_size]),
+                            .oid = oid,
+                            .prefix = long_prefix,
+                            .n = batch_size,
+                            .free_id = free_id,
+                            .avail = avail
+                    };
+
+                    log_msg("Using thread #%d to merge", DEBUG, free_id);
+                    int8_t tcreate = pthread_create(&thread_ptrs[free_id], NULL, pmerge_bam_nway, &arg_ptrs[free_id]);
+                    if (0 == tcreate) {
+                        avail[free_id] = false;
+                    }
+
+                    oid++;
+                    processed_size += batch_size;
+                }
+            }
+            for (int8_t i = 0; i < MAX_THREADS; i++) {
+                if (NULL == (void*) thread_ptrs[i]) {continue;}
+                log_msg("Waiting for merging thread #%d to finish", DEBUG, i);
+                pthread_join(thread_ptrs[i], NULL);
             }
         }
-
         str_vec_destroy(bam_vec);
 
         remaining = count_files(tmpdir);
         mround++;
     }
+
+    free(avail);
+    free(thread_ptrs);
     free(long_prefix);
+    free(arg_ptrs);
     str_vec_t *bam_vec = get_bams(tmpdir);
 
     char *sorted_path;

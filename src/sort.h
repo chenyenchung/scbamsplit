@@ -5,6 +5,7 @@
 #ifndef SCBAMSPLIT_SORT_H
 #define SCBAMSPLIT_SORT_H
 #include "htslib/sam.h"
+#include <stdbool.h>
 
 extern int64_t KEY_SIZE;
 extern int64_t RN_SIZE;
@@ -37,14 +38,15 @@ void set_UB(tag_meta_t *tag_meta, char *platform);
 tag_meta_t *initialize_tag_meta();
 void print_tag_meta(tag_meta_t *tag_meta, const char *header);
 void destroy_tag_meta(tag_meta_t *tag_meta);
-
-int64_t
-fill_chunk(samFile *fp, sam_hdr_t *header, sam_read_t **read_array, int64_t chunk_size, int16_t qthres,
+void set_bool(bool *bool_arr, int8_t length, bool set_val);
+int8_t count_true(bool *bool_arr, int8_t length);
+int8_t find_avail(bool *bool_arr, int8_t length);
+int64_t fill_chunk(samFile *fp, sam_hdr_t *header, sam_read_t **read_array, int64_t chunk_size, int16_t qthres,
            tag_meta_t *cb_meta, tag_meta_t *ub_meta);
 void sort_chunk(sam_read_t **reads, int64_t chunk_size);
 sam_read_t** chunk_init(uint32_t chunk_size);
 void chunk_destroy(sam_read_t **read_array, uint32_t chunk_size);
-char *process_bam(samFile *fp, sam_hdr_t *header, sam_read_t **chunk, int64_t chunk_size, char *oprefix, int16_t qthres,
+char *process_bam(samFile *fp, sam_hdr_t *header, sam_read_t ***chunk, int64_t chunk_size, char *oprefix, int16_t qthres,
                   tag_meta_t *cb_meta, tag_meta_t *ub_meta);
 
 

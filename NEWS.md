@@ -1,5 +1,15 @@
 ## Patch Note
 
+### v0.3.0 (2023-09-06)
+
+#### New Feature
+
+- Add multithreading support
+
+#### Changes
+
+- More conserved memory estimation
+
 ### v0.2.0 (2023-09-04)
 
 #### New Feature

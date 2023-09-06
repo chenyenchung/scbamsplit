@@ -69,7 +69,7 @@ by typing `scbamsplit -h` in your terminal.
 
 ```
 Program: scbamsplit (Parallel BAM file subset by CBC/UMI)
-Version: v0.2.0 (Dependent on htslib v1.17)
+Version: v0.3.0 (Dependent on htslib v1.17)
 
 Usage: scbamsplit -f path -m path
 Options:
@@ -94,6 +94,7 @@ Options:
     -l/--umi-length: The length of the UMI default: 20)
     -r/--rn-length: The length of the read name (default: 70)
     -M/--mem: The estimated maximum amount of memory to use (In GB, default: 4)
+    -@/--threads: Setting the number of threads to use (default: 1)
     -n/--dry-run: Only print out parameters
     -v/--verbose: Set verbosity level (1 - 5) (default: 2, 3 if -v provided without a value)
     -h/--help: Show this documentation

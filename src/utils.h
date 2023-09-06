@@ -50,4 +50,5 @@ extern log_level_t OUT_LEVEL;
 extern char *OUT_PATH;
 extern bool dev;
 extern char* LEVEL_FLAG[6];
+extern int64_t MAX_THREADS;
 #endif //SCBAMSPLIT_UTILS_H

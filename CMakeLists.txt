@@ -170,6 +170,8 @@ libfind_process(HTSlib)
 
 list(APPEND CMAKE_BUILD_RPATH ${HTSlib_LIB_DIR})
 set(CMAKE_INSTALL_RPATH "${CMAKE_BUILD_RPATH}")
+set(THREADS_PREFER_PTHREAD_FLAG ON)
+find_package(Threads REQUIRED)
 
 ## Check if compiler supports inter-procedural optimization
 ## https://stackoverflow.com/questions/31355692/how-do-i-enable-link-time-optimization-lto-with-cmake
@@ -185,6 +187,8 @@ message(STATUS "   CMake Install Rpath: ${CMAKE_INSTALL_RPATH}")
 
 #########
 # add extra include directories
+#add_compile_options(-fsanitize=thread)
+#add_link_options(-fsanitize=thread)
 add_executable(${PROJECT_NAME}
         src/main.c
         src/hash.c
@@ -201,5 +205,5 @@ else()
 endif()
 target_include_directories(${PROJECT_NAME} PUBLIC ${HTSlib_INCLUDE_DIRS})
 target_link_libraries(${PROJECT_NAME} ${HTSlib_LIBRARIES})
-
+target_link_libraries(${PROJECT_NAME} PRIVATE ${CMAKE_THREAD_LIBS_INIT})
 install(TARGETS ${PROJECT_NAME} DESTINATION bin)
