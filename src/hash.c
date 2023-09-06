@@ -1,14 +1,11 @@
 //
 // Created by Yen-Chung Chen on 2/23/23.
 //
+#include "hash.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 #include <stdbool.h>
-#include "htslib/sam.h"
-#include "uthash.h"
-#include "shared_const.h"
-#include "hash.h"
 #include "utils.h"
 rt2label* hash_readtag(char *path) {
     // Open meta data file

@@ -1,20 +1,21 @@
 //
 // Created by Yen-Chung Chen on 2/24/23.
 //
+#include "utils.h"
 #include <stdio.h>
 #include <string.h>
+#include <stdbool.h>
+#include <stdint.h>
 #include <ctype.h> /* For tolower() */
-#include "utils.h"
-#include "sort.h"
-#include "uthash.h"
-#include "hash.h"
-#include "htslib/sam.h"
-#include "sys/stat.h" /* stat() and mkdir() */
 #include <time.h>
 #include <stdarg.h>
 #include <errno.h>
 #include <dirent.h>
 #include <unistd.h>
+#include "htslib/sam.h"
+#include "sys/stat.h" /* stat() and mkdir() */
+#include "thread_pool.h"
+#include "hash.h"
 
 
 uint64_t max_strlen(char **strarr);
@@ -45,6 +46,7 @@ void show_usage() {
     fprintf(stderr, "    -l/--umi-length: The length of the UMI default: 20)\n");
     fprintf(stderr, "    -r/--rn-length: The length of the read name (default: 70)\n");
     fprintf(stderr, "    -M/--mem: The estimated maximum amount of memory to use (In GB, default: 4)\n");
+    fprintf(stderr, "    -@/--threads: Setting the number of threads to use (default: 1)\n");
     fprintf(stderr, "    -n/--dry-run: Only print out parameters\n");
     fprintf(stderr, "    -v/--verbose: Set verbosity level (1 - 5) (default: 2, 3 if -v provided without a value)\n");
     fprintf(stderr, "    -h/--help: Show this documentation\n");
@@ -204,7 +206,7 @@ str_vec_t* str_vec_init (int64_t n, uint16_t str_len) {
     svec->str_arr = (char **) calloc(n, sizeof(char*));
 
     for (int64_t i = 0; i < n; i++) {
-        svec->str_arr[i] = calloc(str_len, sizeof(char));
+        svec->str_arr[i] = calloc(str_len + 1, sizeof(char));
         if (NULL == svec->str_arr[i]) {
             for (int64_t j = 0; j < i; j++) {
                 free(svec->str_arr[i]);
@@ -213,6 +215,22 @@ str_vec_t* str_vec_init (int64_t n, uint16_t str_len) {
             return NULL;
         }
     }
+    return svec;
+}
+
+str_vec_t *str_vec_copy(str_vec_t *ptr, int32_t from) {
+    int32_t farray_size = ptr->length - from;
+    char **farray_copy;
+    farray_copy = calloc(farray_size, sizeof(char*));
+    for (int32_t i = 0;  i < farray_size; i++) {
+        farray_copy[i] = calloc(ptr->str_length , sizeof(char));
+        strcpy(farray_copy[i], ptr->str_arr[from + i]);
+    }
+    str_vec_t* svec;
+    svec = calloc(1, sizeof(str_vec_t));
+    svec->length = farray_size;
+    svec->str_length = ptr->str_length;
+    svec->str_arr = farray_copy;
     return svec;
 }
 
@@ -253,9 +271,9 @@ str_vec_t * get_bams(char *tmpdir) {
         int64_t bam_count = count_files(tmpdir);
         if (-1 == bam_count) return NULL;
 
-        str_vec_t *bam_list = str_vec_init(bam_count, 17);
+        str_vec_t *bam_list = str_vec_init(bam_count, 18);
 
-        int8_t file_count = 0;
+        int64_t file_count = 0;
         while(NULL != (en = readdir(dir_ptr))) {
             // Ignore . and ..
             if ('.' == en->d_name[0]) continue;
@@ -288,7 +306,8 @@ char * tname_init(char * tmpdir, char * prefix, int32_t uid_length, uint32_t oid
     return name;
 }
 
-int8_t merge_bam_nway(char *tmpdir, char **farray, uint32_t oid, char *prefix, int32_t n) {
+int8_t merge_bam_nway(char *tmpdir, str_vec_t *bam_vec, uint32_t oid, char *prefix, int64_t n) {
+    char **farray = bam_vec->str_arr;
     char **ffarray = calloc(n, sizeof(char*));
     samFile **fpa = calloc(n, sizeof(samFile*));
     sam_hdr_t **header_arr = calloc(n, sizeof(sam_hdr_t*));
@@ -298,7 +317,8 @@ int8_t merge_bam_nway(char *tmpdir, char **farray, uint32_t oid, char *prefix, i
     char *key_temp = calloc(KEY_SIZE, sizeof(char));
     int8_t *tag_stat_arr = calloc(n, sizeof(int8_t));
 
-    for (int8_t i = 0; i < n; i++) {
+
+    for (int64_t i = 0; i < n; i++) {
         ffarray[i] = calloc(strlen(tmpdir) + strlen(farray[i]) + 1, sizeof(char));
         strcpy(ffarray[i], tmpdir);
         strcat(ffarray[i], farray[i]);
@@ -311,8 +331,6 @@ int8_t merge_bam_nway(char *tmpdir, char **farray, uint32_t oid, char *prefix, i
     }
 
     char *mname = tname_init(tmpdir, prefix, 5, oid);
-    log_msg("Merging into %s", DEBUG, mname);
-
     htsFile* tfp = sam_open(mname, "wb");
 
     int wr_stat;
@@ -328,7 +346,7 @@ int8_t merge_bam_nway(char *tmpdir, char **farray, uint32_t oid, char *prefix, i
 
     int32_t any_r = 1;
     bool first_item = true;
-    int8_t key_min_id;
+    int64_t key_min_id;
     while (any_r == 1) {
         first_item = true;
         key_min_id = 0;
@@ -352,7 +370,7 @@ int8_t merge_bam_nway(char *tmpdir, char **farray, uint32_t oid, char *prefix, i
         wr_stat = sam_write1(tfp, header_arr[0], rarray[key_min_id]);
         rstat_arr[key_min_id] = sam_read1(fpa[key_min_id], header_arr[key_min_id], rarray[key_min_id]);
 
-        for (int8_t i = 0; i < n; i++) {
+        for (int64_t i = 0; i < n; i++) {
             if (rstat_arr[i] >= 0) {
                 any_r = 1;
                 break;
@@ -371,13 +389,16 @@ int8_t merge_bam_nway(char *tmpdir, char **farray, uint32_t oid, char *prefix, i
     bool rm_err = false;
     release_key_and_fp_and_exit:
     free(mname);
-    for (int8_t i = 0; i < n; i++) {
-        if (remove(ffarray[i]) != 0) rm_err = true;
-        free(ffarray[i]);
+    for (int64_t i = 0; i < n; i++) {
         sam_hdr_destroy(header_arr[i]);
         bam_destroy1(rarray[i]);
         sam_close(fpa[i]);
         free(key_arr[i]);
+        if (unlink(ffarray[i]) != 0) rm_err = true;
+        free(ffarray[i]);
+        if (rm_err) {
+            log_msg("Fail to remove merged temporary files ", ERROR);
+        }
     }
     free(rstat_arr);
     free(ffarray);
@@ -387,12 +408,15 @@ int8_t merge_bam_nway(char *tmpdir, char **farray, uint32_t oid, char *prefix, i
     free(key_arr);
     free(key_temp);
     free(tag_stat_arr);
-
+    str_vec_destroy(bam_vec);
     sam_close(tfp);
-    if (rm_err) {
-        log_msg("Fail to remove merged temporary files ", ERROR);
-    }
+
     return return_val;
+}
+
+void pmerge_bam_nway(void *args) {
+    mnway_args *cargs = (mnway_args*) args;
+    merge_bam_nway(cargs->tmpdir, cargs->bam_vec, cargs->oid, cargs->prefix, cargs->n);
 }
 
 char* merge_bams(char * tmpdir) {
@@ -414,34 +438,54 @@ char* merge_bams(char * tmpdir) {
     // round a will be merged first in round b if left to the next round
     // in a previous round with odd # of members
     long_prefix = calloc(9, sizeof(char));
+
+    tpool_t *merge_tp = tpool_create(MAX_THREADS, MAX_THREADS);
     while (remaining > 1) {
         str_vec_t *bam_vec = get_bams(tmpdir);
         strcpy(long_prefix, "merged");
         strcat(long_prefix, parray[mround % 26]);
 
-        uint32_t batch_size = 6;
+        uint32_t batch_size = 8;
         uint32_t processed_size = 0;
         uint32_t oid = 0;
         uint32_t residual_size = 0;
 
-        if (bam_vec->length < batch_size) {
-            merge_bam_nway(tmpdir, bam_vec->str_arr, 1, long_prefix, bam_vec->length);
+        if (bam_vec->length <= batch_size) {
+            str_vec_t *bam_vec_copy = str_vec_copy(bam_vec, 0);
+            merge_bam_nway(tmpdir, bam_vec_copy, 1, long_prefix, bam_vec->length);
         } else {
             while (processed_size < bam_vec->length) {
                 residual_size = bam_vec->length - processed_size;
                 if (residual_size < batch_size) batch_size = residual_size;
-                merge_bam_nway(tmpdir, &(bam_vec->str_arr[processed_size]),
-                               oid, long_prefix, batch_size);
+
+                if (MAX_THREADS == 1) {
+                    str_vec_t *bam_vec_copy = str_vec_copy(bam_vec, processed_size);
+                    merge_bam_nway(tmpdir, bam_vec_copy, oid, long_prefix, batch_size);
+                } else {
+                    str_vec_t *bam_vec_copy = str_vec_copy(bam_vec, processed_size);
+
+                    mnway_args args = {
+                            .tmpdir = tmpdir,
+                            .bam_vec = bam_vec_copy,
+                            .oid = oid,
+                            .prefix = long_prefix,
+                            .n = batch_size,
+                    };
+                    bool tqueue = tpool_add_work(merge_tp, pmerge_bam_nway, &args, sizeof(mnway_args));
+                }
                 oid++;
                 processed_size += batch_size;
             }
+            tpool_wait(merge_tp);
         }
-
         str_vec_destroy(bam_vec);
-
+        tpool_wait(merge_tp);
         remaining = count_files(tmpdir);
         mround++;
     }
+    tpool_wait(merge_tp);
+    tpool_destroy(merge_tp);
+
     free(long_prefix);
     str_vec_t *bam_vec = get_bams(tmpdir);
 

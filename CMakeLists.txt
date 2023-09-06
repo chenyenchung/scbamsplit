@@ -170,11 +170,13 @@ libfind_process(HTSlib)
 
 list(APPEND CMAKE_BUILD_RPATH ${HTSlib_LIB_DIR})
 set(CMAKE_INSTALL_RPATH "${CMAKE_BUILD_RPATH}")
+find_package(Threads REQUIRED)
+set(CMAKE_THREAD_PREFER_PTHREAD TRUE)
+set(THREADS_PREFER_PTHREAD_FLAG TRUE)
 
 ## Check if compiler supports inter-procedural optimization
 ## https://stackoverflow.com/questions/31355692/how-do-i-enable-link-time-optimization-lto-with-cmake
 check_ipo_supported(RESULT IPO_SUPPORT OUTPUT IPO_ERROR)
-
 
 message(STATUS "   Building with ${CMAKE_BUILD_TYPE} configuration...")
 message(STATUS "   HTSlib include dirs: ${HTSlib_INCLUDE_DIRS}")
@@ -185,11 +187,21 @@ message(STATUS "   CMake Install Rpath: ${CMAKE_INSTALL_RPATH}")
 
 #########
 # add extra include directories
+
+if ( CMAKE_BUILD_TYPE STREQUAL "Debug" )
+    message(STATUS "   With sanitizer")
+#    add_compile_options(-fsanitize=thread)
+#    add_link_options(-fsanitize=thread)
+#    add_compile_options(-fsanitize=address)
+#    add_link_options(-fsanitize=address)
+endif()
 add_executable(${PROJECT_NAME}
         src/main.c
         src/hash.c
         src/utils.c
-        src/sort.c)
+        src/sort.c
+        src/thread_pool.c
+        src/thread_pool.h)
 if ( IPO_SUPPORT )
     if (NOT CMAKE_BUILD_TYPE MATCHES "Debug")
         message(STATUS "Enabling link-time optimization")
@@ -200,6 +212,5 @@ else()
     message(STATUS "IPO not supported")
 endif()
 target_include_directories(${PROJECT_NAME} PUBLIC ${HTSlib_INCLUDE_DIRS})
-target_link_libraries(${PROJECT_NAME} ${HTSlib_LIBRARIES})
-
+target_link_libraries(${PROJECT_NAME} ${HTSlib_LIBRARIES} Threads::Threads)
 install(TARGETS ${PROJECT_NAME} DESTINATION bin)

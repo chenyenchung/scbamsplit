@@ -1,13 +1,13 @@
 //
 // Created by Yen-Chung Chen on 8/23/23.
 //
-#include "sort.h"
 #include <string.h>
 #include <stdbool.h>
 #include <ctype.h>
-#include "htslib/sam.h" /* include stdint.h with it */
 #include "htslib/kstring.h"
+#include "sort.h"
 #include "utils.h"
+#include "thread_pool.h"
 
 int8_t fetch_tag(bam1_t *read, char *tag, char* tag_ptr) {
     // bam_aux_get_str() exists, but to return a kstring,
@@ -43,7 +43,7 @@ int8_t fetch_name(bam1_t *read, char* tag_ptr, tag_meta_t *info) {
 
     // Need to copy -- strtok will modify the string
     char *rncpy = calloc(strlen(rn) + 1, sizeof(char));
-    strncpy(rncpy, rn, strlen(rn));
+    strcpy(rncpy, rn);
     char *token;
 
 
@@ -133,7 +133,7 @@ void print_tag_meta(tag_meta_t *tag_meta, const char *header) {
 }
 
 void set_CB(tag_meta_t *tag_meta, char *platform) {
-    for (int8_t i = 0; i < strlen(platform); i++) {
+    for (uint32_t i = 0; i < strlen(platform); i++) {
         platform[i] = tolower(platform[i]);
     }
     if (strcmp("10xv2", platform) == 0) {
@@ -149,7 +149,7 @@ void set_CB(tag_meta_t *tag_meta, char *platform) {
 }
 
 void set_UB(tag_meta_t *tag_meta, char *platform) {
-    for (int8_t i = 0; i < strlen(platform); i++) {
+    for (uint32_t i = 0; i < strlen(platform); i++) {
         platform[i] = tolower(platform[i]);
     }
     if (strcmp("10xv2", platform) == 0) {
@@ -176,11 +176,6 @@ int8_t is_primary(bam1_t *read, char* flag_ptr) {
     bool not_secondary = !((read)->core.flag & 256); // Flag for secondary alignment is 256
     bool mapped = !((read)->core.flag & 4); // Flag for unmapped is 4
 
-    if ((NULL == (void *) not_secondary) || (NULL == (void *) mapped)) {
-        log_msg( "Fail to read bitwise flag", ERROR);
-        return 1;
-    }
-
     // This is used for sorting, so we want primary to be coded 1 while others being 2
     sprintf(flag_ptr, "%d", 2 - not_secondary && mapped);
     return 0;
@@ -191,7 +186,7 @@ void get_MAPQ(bam1_t *read, char* val_ptr) {
     sprintf(val_ptr, "%03d", mapq);
 }
 
-int64_t fill_chunk(samFile *fp, sam_hdr_t *header, sam_read_t **read_array, int64_t chunk_size, int16_t qthres,
+int64_t fill_chunk(samFile *fp, sam_hdr_t *header, ichunk_t *ic, int16_t qthres,
                    tag_meta_t *cb_meta, tag_meta_t *ub_meta) {
     /**
      * @abstract Fill read buffer to designated size and return the index of next read to read or -1
@@ -205,6 +200,9 @@ int64_t fill_chunk(samFile *fp, sam_hdr_t *header, sam_read_t **read_array, int6
      * @returns The number of reads that have been allocated into the chunk on success; -1 on error;
      * -[OBSERVED_READ_NAME_SIZE] when read names are not sufficiently padded
      */
+
+    sam_read_t **read_array = ic->chunk;
+    int64_t chunk_size = ic->chunk_size;
 
     // Note that read_array must be allocated OUTSIDE!
     bam1_t *temp_read = bam_init1();
@@ -303,6 +301,7 @@ int64_t fill_chunk(samFile *fp, sam_hdr_t *header, sam_read_t **read_array, int6
         }
         read_kept++;
     }
+    ic->read_kept = read_kept;
 
     stop_fill_and_free:
         bam_destroy1(temp_read);
@@ -321,7 +320,9 @@ int read_cmp(const void *a, const void *b) {
     return strcmp(reada->key, readb->key);
 }
 
-void sort_chunk(sam_read_t **reads, int64_t chunk_size) {
+void sort_chunk(ichunk_t *ic) {
+    sam_read_t **reads = ic->chunk;
+    int64_t chunk_size = ic->read_kept;
     qsort(reads, chunk_size, sizeof(sam_read_t*), read_cmp);
 }
 
@@ -364,7 +365,42 @@ void chunk_destroy(sam_read_t **read_array, uint32_t chunk_size) {
     free(read_array);
 }
 
-char *process_bam(samFile *fp, sam_hdr_t *header, sam_read_t **chunk, int64_t chunk_size, char *oprefix, int16_t qthres,
+
+
+void sort_export_chunk(void *args_void) {
+    chunk_arg_t *args =(chunk_arg_t *) args_void;
+    ichunk_t* ic = args->ic;
+
+    sort_chunk(ic);
+
+    char *tname = tname_init(args->tmpdir, "chunk", 5, args->tid);
+
+    htsFile* tfp = sam_open(tname, "wb");
+
+    int write_status = sam_hdr_write(tfp, args->header);
+    if (write_status != 0) {
+        log_msg( "Fail to write SAM header into temporary files", ERROR);
+        goto free_and_exit;
+    }
+
+    int write_to_bam = 0;
+    for (int64_t i = 0; i < ic->read_kept; i++) {
+        sam_read_t* cr = ic->chunk[i];
+        write_to_bam = sam_write1(tfp, args->header, cr->read);
+        if (write_to_bam == -1) {
+            log_msg("Fail to write sorted reads into temporary files", ERROR);
+            goto free_and_exit;
+        }
+    }
+
+    chunkq_add(args->give_q, ic);
+
+    free_and_exit:
+    free(tname);
+    sam_close(tfp);
+}
+
+char *process_bam(samFile *fp, sam_hdr_t *header, int64_t chunk_size, char *oprefix, int64_t qthres,
                   tag_meta_t *cb_meta, tag_meta_t *ub_meta) {
     /**
      * @abstract Process all reads in an opened SAM/BAM file in chunks and save sorted reads in a temporary
@@ -379,53 +415,100 @@ char *process_bam(samFile *fp, sam_hdr_t *header, sam_read_t **chunk, int64_t ch
      */
 
     int64_t size_retrieved = chunk_size;
-    int chunk_num = 0;
+    int32_t chunk_num = 0;
     // Create temporary file dir for sorted chunks
     char *tmpdir = create_tempdir(oprefix);
 
+    chunkq_t *init_q = chunkq_create();
+    chunkq_t *chunk_q = chunkq_create();
+    tpool_t *sort_tp;
+    if (MAX_THREADS == 1) {
+        chunkq_ele_init(init_q, chunk_size);
+    } else {
+        sort_tp = tpool_create(MAX_THREADS, MAX_THREADS);
+        for (int32_t i = 0; i < MAX_THREADS; i++) {
+            chunkq_ele_init(init_q, chunk_size);
+        }
+    }
+
     while (size_retrieved == chunk_size) {
         chunk_num += 1;
-        log_msg("Chunk #%lld filling", DEBUG, chunk_num);
 
-        size_retrieved = fill_chunk(fp, header, chunk, chunk_size, qthres, cb_meta, ub_meta);
+        ichunk_t *this_chunk;
+        log_msg("Chunk #%lld filling", DEBUG, chunk_num);
+        if (init_q->qlength > 0) {
+            this_chunk = chunkq_get(init_q);
+        } else {
+            this_chunk = chunkq_get(chunk_q);
+        }
+
+        size_retrieved = fill_chunk(fp, header, this_chunk, qthres, cb_meta, ub_meta);
+
         if (size_retrieved < -1) {
             log_msg("Insufficient RN size (%d).", ERROR, RN_SIZE - 1);
             log_msg("Please increase RN size (-r/--rn-length) to at least %d", ERROR, -size_retrieved + 1);
             goto free_tmpdir_exit;
         } else if (size_retrieved == -1) {
-            // Error message is generated in fill_chunk()
-            goto free_tmpdir_exit;
+            // All reads are fetched
+            goto wait_for_threads;
         }
+        chunkq_add(chunk_q, this_chunk);
 
-        sort_chunk(chunk, size_retrieved);
-        sam_hdr_change_HD(header, "SO", "unknown");
+        if (MAX_THREADS == 1) {
+            ichunk_t *this_chunk = chunkq_get(chunk_q);
+            sort_chunk(this_chunk);
 
-        char *tname = tname_init(tmpdir, "chunk", 5, chunk_num);
+            char *tname = tname_init(tmpdir, "chunk", 5, chunk_num);
+            htsFile* tfp = sam_open(tname, "wb");
+            free(tname);
 
-        htsFile* tfp = sam_open(tname, "wb");
-        free(tname);
-
-        int write_status = sam_hdr_write(tfp, header);
-        if (write_status != 0) {
-            log_msg( "Fail to write SAM header into temporary files", ERROR);
-            sam_close(tfp); // This has to be done in the while loop
-            goto free_tmpdir_exit;
-        }
-
-        int write_to_bam = 0;
-        for (int64_t i = 0; i < size_retrieved; i++) {
-            write_to_bam = sam_write1(tfp, header, chunk[i]->read);
-            if (write_to_bam == -1) {
-                log_msg("Fail to write sorted reads into temporary files", ERROR);
+            int write_status = sam_hdr_write(tfp, header);
+            if (write_status != 0) {
+                log_msg( "Fail to write SAM header into temporary files", ERROR);
                 sam_close(tfp); // This has to be done in the while loop
                 goto free_tmpdir_exit;
             }
+
+            int write_to_bam = 0;
+            for (int64_t i = 0; i < size_retrieved; i++) {
+                write_to_bam = sam_write1(tfp, header, (this_chunk->chunk)[i]->read);
+                if (write_to_bam == -1) {
+                    log_msg("Fail to write sorted reads into temporary files", ERROR);
+                    sam_close(tfp); // This has to be done in the while loop
+                    goto free_tmpdir_exit;
+                }
+            }
+            sam_close(tfp);
+            chunkq_add(chunk_q, this_chunk);
+        } else {
+            chunk_arg_t args = {
+                    .ic = chunkq_get(chunk_q),
+                    .give_q = chunk_q,
+                    .header = header,
+                    .tmpdir = tmpdir,
+                    .tid = chunk_num,
+            };
+            tpool_add_work(sort_tp, sort_export_chunk, &args, sizeof(chunk_arg_t));
         }
-        sam_close(tfp);
     }
+
+    wait_for_threads:
+    if (MAX_THREADS > 1) {
+        tpool_wait(sort_tp);
+        tpool_destroy(sort_tp);
+    }
+    chunkq_destroy(init_q);
+    chunkq_destroy(chunk_q);
+
     return tmpdir;
 
     free_tmpdir_exit:
-        free(tmpdir);
-        return "1";
+    if (MAX_THREADS > 1) {
+        tpool_wait(sort_tp);
+        tpool_destroy(sort_tp);
+    }
+    free(tmpdir);
+    chunkq_destroy(init_q);
+    chunkq_destroy(chunk_q);
+    return "1";
 }

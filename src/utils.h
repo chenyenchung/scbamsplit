@@ -1,14 +1,28 @@
 //
 // Created by Yen-Chung Chen on 2/24/23.
 //
-#include <stdbool.h>
-#include <stdint.h>
-#include "hash.h"
-#include "htslib/sam.h"
-#include "sort.h"
-
 #ifndef SCBAMSPLIT_UTILS_H
 #define SCBAMSPLIT_UTILS_H
+#include "hash.h"
+typedef struct {
+    char *key;
+    bam1_t *read;
+} sam_read_t;
+
+enum location {
+    READ_TAG,
+    READ_NAME
+};
+
+typedef struct {
+    enum location location;
+    char *tag_name;
+    char *sep;
+    uint8_t field;
+    uint8_t length;
+} tag_meta_t;
+#include "sort.h"
+
 ///////////// Logging utilities ////////////////////
 typedef enum {
     DEBUG = 5,
@@ -25,13 +39,21 @@ void log_message(char* message, log_level_t level, char* log_path, log_level_t O
 // Defining a string array with fixed element length and number
 typedef struct {
     char **str_arr;
-    uint32_t length;
+    int64_t length;
     uint16_t str_length;
 } str_vec_t;
 
 str_vec_t* str_vec_init (int64_t n, uint16_t str_len);
+str_vec_t* str_vec_copy (str_vec_t *ptr, int32_t from);
 int8_t str_vec_destroy(str_vec_t *ptr);
 ///////////////////////////////////////////////////
+typedef struct {
+    char *tmpdir;
+    str_vec_t *bam_vec;
+    uint32_t oid;
+    char *prefix;
+    int64_t n;
+} mnway_args;
 
 void show_usage();
 int create_directory(char* pathname);
@@ -50,4 +72,5 @@ extern log_level_t OUT_LEVEL;
 extern char *OUT_PATH;
 extern bool dev;
 extern char* LEVEL_FLAG[6];
+extern int64_t MAX_THREADS;
 #endif //SCBAMSPLIT_UTILS_H

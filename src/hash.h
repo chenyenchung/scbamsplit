@@ -1,11 +1,11 @@
 //
 // Created by Yen-Chung Chen on 2/23/23.
 //
+#ifndef SCBAMSPLIT_HASH_H
+#define SCBAMSPLIT_HASH_H
 #include "htslib/sam.h"
 #include "uthash.h"
 #include "shared_const.h"
-#ifndef SCBAMSPLIT_HASH_H
-#define SCBAMSPLIT_HASH_H
 
 typedef struct {
     char rt[MAX_LINE_LENGTH];             /* key (string is WITHIN the structure) */
