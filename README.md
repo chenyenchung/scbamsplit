@@ -1,6 +1,6 @@
 # scbamsplit
 
-> Last updated: 2023-09-04
+> Last updated: 2023-09-07
 
 An open-source and light-weight tool to subset BAM files based on read tags in parallel
 powered by `htslib` and [`uthash`](https://troydhanson.github.io/uthash/) under MIT license.
@@ -69,7 +69,7 @@ by typing `scbamsplit -h` in your terminal.
 
 ```
 Program: scbamsplit (Parallel BAM file subset by CBC/UMI)
-Version: v0.3.0 (Dependent on htslib v1.17)
+Version: v0.3.1 (Dependent on htslib v1.17)
 
 Usage: scbamsplit -f path -m path
 Options:

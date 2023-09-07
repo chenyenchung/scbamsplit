@@ -22,7 +22,7 @@ uint64_t max_strlen(char **strarr);
 
 void show_usage() {
     fprintf(stderr, "Program: scbamsplit (Parallel BAM file subset by CBC/UMI)\n");
-    fprintf(stderr, "Version: v0.2.0 (Dependent on htslib v1.17)\n");
+    fprintf(stderr, "Version: v0.3.1 (Dependent on htslib v1.17)\n");
     fprintf(stderr, "\n");
     fprintf(stderr, "Usage: scbamsplit -f path -m path\n");
     fprintf(stderr, "Options:\n\n");
@@ -463,7 +463,6 @@ char* merge_bams(char * tmpdir) {
                     merge_bam_nway(tmpdir, bam_vec_copy, oid, long_prefix, batch_size);
                 } else {
                     str_vec_t *bam_vec_copy = str_vec_copy(bam_vec, processed_size);
-
                     mnway_args args = {
                             .tmpdir = tmpdir,
                             .bam_vec = bam_vec_copy,
@@ -476,7 +475,6 @@ char* merge_bams(char * tmpdir) {
                 oid++;
                 processed_size += batch_size;
             }
-            tpool_wait(merge_tp);
         }
         str_vec_destroy(bam_vec);
         tpool_wait(merge_tp);

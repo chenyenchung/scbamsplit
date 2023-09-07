@@ -1,6 +1,6 @@
 ## Patch Note
 
-### v0.3.0 (2023-09-07)
+### v0.3.1 (2023-09-07)
 
 #### New Feature
 
@@ -9,6 +9,10 @@
 #### Changes
 
 - More conserved memory estimation
+
+#### Bug fix
+
+- Now rapid job queuing will no longer cause thread pool to exit prematurely
 
 ### v0.2.0 (2023-09-04)
 

@@ -58,6 +58,7 @@ static void *tpool_worker(void *arg) {
 
         work = tpool_work_get(tm);
         tm->working_count++;
+        tm->queue_length--;
         pthread_cond_broadcast(&(tm->retrieve_cond));
         pthread_mutex_unlock(&(tm->work_mutex));
 
@@ -167,6 +168,7 @@ bool tpool_add_work(tpool_t *tm, thread_func_t func, void *arg, size_t arg_size)
         tm->work_last = work;
     }
 
+    tm->queue_length++;
     pthread_cond_broadcast(&(tm->work_avail_cond));
     pthread_mutex_unlock(&(tm->work_mutex));
 
@@ -178,7 +180,9 @@ void tpool_wait(tpool_t *tm) {
 
     pthread_mutex_lock(&(tm->work_mutex));
     while (1) {
-        if ((!tm->stop && tm->working_count != 0) || (tm->stop && tm->thread_count != 0)) {
+        if ((!tm->stop && tm->queue_length != 0) || (!tm->stop && tm->working_count != 0) || (tm->stop && tm->thread_count != 0)) {
+            // Must also check if the queue_length is 0 to prevent when the work is assigned
+            // but tpool_wait acquire the lock and see no working threads.
             pthread_cond_wait(&(tm->working_cond), &(tm->work_mutex));
         } else {
             break;
