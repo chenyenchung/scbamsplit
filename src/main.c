@@ -3,6 +3,7 @@
 #include <stdio.h>   /* printf */
 #include <getopt.h>  /* getopt */
 #include <stdbool.h> /* Define boolean type */
+#include <unistd.h>
 #include "htslib/sam.h" /* Use htslib to interact with bam files, imports stdint.h as well */
 #include "uthash.h"  /* hash table */
 #include "hash.h"    /* Defining the hash tables actually used */
@@ -235,6 +236,13 @@ int main(int argc, char *argv[]) {
         } else {
             fprintf(stderr, "\tRunning **without** deduplication.\n\n");
         }
+    }
+
+    if (access(bampath, F_OK) != 0) {
+        destroy_tag_meta(cb_meta);
+        destroy_tag_meta(ub_meta);
+        log_msg("%s not found", ERROR, bampath);
+        return 1;
     }
 
 

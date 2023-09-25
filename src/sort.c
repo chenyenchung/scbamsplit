@@ -4,7 +4,6 @@
 #include <string.h>
 #include <stdbool.h>
 #include <ctype.h>
-#include <lz4.h>
 #include "htslib/kstring.h"
 #include "sort.h"
 #include "utils.h"
@@ -308,9 +307,9 @@ int64_t fill_chunk(samFile *fp, sam_hdr_t *header, ichunk_t *ic, int16_t qthres,
         }
         read_kept++;
     }
-    ic->read_kept = read_kept;
 
     stop_fill_and_free:
+        ic->read_kept = read_kept;
         bam_destroy1(temp_read);
         free(PR);
         free(MAPQ);
