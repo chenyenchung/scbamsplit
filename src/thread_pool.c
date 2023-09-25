@@ -229,6 +229,7 @@ ichunk_t *create_chunk(chunkq_t *cq, int64_t chunk_size) {
     ic->next_chunk = NULL;
     ic->chunk_size = chunk_size;
     ic->read_kept = 0;
+    ic->processed = true; // To make sure the chunk is initially filled
     return ic;
 }
 

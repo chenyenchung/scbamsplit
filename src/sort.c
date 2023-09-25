@@ -41,6 +41,8 @@ int8_t fetch_tag2(bam1_t *read, char* tag_ptr, tag_meta_t *info) {
 int8_t fetch_name(bam1_t *read, char* tag_ptr, tag_meta_t *info) {
     char* rn = bam_get_qname(read);
 
+    if (rn[0] == info->sep[0]) return -1;
+
     // Need to copy -- strtok will modify the string
     char *rncpy = calloc(strlen(rn) + 1, sizeof(char));
     strcpy(rncpy, rn);
@@ -65,17 +67,14 @@ int8_t get_CB (bam1_t *read, tag_meta_t* info, char* tag_ptr) {
     int8_t exit_code = 0;
     switch (info->location) {
         case READ_TAG:
-            fetch_tag2(read, tag_ptr, info);
+            exit_code = fetch_tag2(read, tag_ptr, info);
             break;
         case READ_NAME:
-            fetch_name(read, tag_ptr, info);
+            exit_code = fetch_name(read, tag_ptr, info);
             break;
         default:
             log_msg("Unknown location type to fetch cell barcode", ERROR);
             exit_code = 1;
-    }
-    if (NULL == tag_ptr) {
-        exit_code = -1;
     }
     return exit_code;
 }
@@ -83,17 +82,14 @@ int8_t get_UB (bam1_t *read, tag_meta_t* info, char* tag_ptr) {
     int8_t exit_code = 0;
     switch (info->location) {
         case READ_TAG:
-            fetch_tag2(read, tag_ptr, info);
+            exit_code = fetch_tag2(read, tag_ptr, info);
             break;
         case READ_NAME:
-            fetch_name(read, tag_ptr, info);
+            exit_code = fetch_name(read, tag_ptr, info);
             break;
         default:
             log_msg("Unknown location type to fetch cell barcode", ERROR);
             exit_code = 1;
-    }
-    if (NULL == tag_ptr) {
-        exit_code = -1;
     }
     return exit_code;
 }
@@ -230,7 +226,6 @@ int64_t fill_chunk(samFile *fp, sam_hdr_t *header, ichunk_t *ic, int16_t qthres,
             // sam_read1 returns -1 when encountering an error
             // or EOF
             if (read_kept > 0) {
-                read_kept--;
                 goto stop_fill_and_free;
             }
             read_kept = -1;
@@ -309,6 +304,7 @@ int64_t fill_chunk(samFile *fp, sam_hdr_t *header, ichunk_t *ic, int16_t qthres,
     }
 
     stop_fill_and_free:
+        ic->processed = false;
         ic->read_kept = read_kept;
         bam_destroy1(temp_read);
         free(PR);
@@ -397,7 +393,11 @@ void sort_export_chunk(void *args_void) {
         }
     }
 
+    log_msg("Completed processing. Prepare to return chunk to the queue.", DEBUG);
+    ic->processed = true;
+
     chunkq_add(args->give_q, ic);
+    log_msg("Completed returning chunk to the queue.", DEBUG);
 
     free_and_exit:
     free(tname);
@@ -440,13 +440,27 @@ char *process_bam(samFile *fp, sam_hdr_t *header, int64_t chunk_size, char *opre
 
         ichunk_t *this_chunk;
         log_msg("Chunk #%lld filling", DEBUG, chunk_num);
+
         if (init_q->qlength > 0) {
             this_chunk = chunkq_get(init_q);
         } else {
             this_chunk = chunkq_get(chunk_q);
-        }
 
-        size_retrieved = fill_chunk(fp, header, this_chunk, qthres, cb_meta, ub_meta);
+            if (!this_chunk->processed) {
+                for (int32_t i = 0; i < chunk_q->qlength; i++) {
+                    chunkq_add(chunk_q, this_chunk);
+                    this_chunk = chunkq_get(chunk_q);
+                    if (this_chunk->processed) {
+                        break;
+                    }
+                }
+            }
+        }
+        log_msg("Receiving a new chunk to fill", DEBUG);
+
+        if (this_chunk->processed) {
+            size_retrieved = fill_chunk(fp, header, this_chunk, qthres, cb_meta, ub_meta);
+        }
 
         if (size_retrieved < -1) {
             log_msg("Insufficient RN size (%d).", ERROR, RN_SIZE - 1);
@@ -485,14 +499,20 @@ char *process_bam(samFile *fp, sam_hdr_t *header, int64_t chunk_size, char *opre
             sam_close(tfp);
             chunkq_add(chunk_q, this_chunk);
         } else {
-            chunk_arg_t args = {
-                    .ic = chunkq_get(chunk_q),
-                    .give_q = chunk_q,
-                    .header = header,
-                    .tmpdir = tmpdir,
-                    .tid = chunk_num,
-            };
-            tpool_add_work(sort_tp, sort_export_chunk, &args, sizeof(chunk_arg_t));
+            ichunk_t *this_ic = chunkq_get(chunk_q);
+            if (this_ic->processed == false) {
+
+                chunk_arg_t args = {
+                        .ic = this_ic,
+                        .give_q = chunk_q,
+                        .header = header,
+                        .tmpdir = tmpdir,
+                        .tid = chunk_num,
+                };
+                tpool_add_work(sort_tp, sort_export_chunk, &args, sizeof(chunk_arg_t));
+            } else {
+                chunkq_add(chunk_q, this_ic);
+            }
         }
     }
 

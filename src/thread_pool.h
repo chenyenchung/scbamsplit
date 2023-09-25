@@ -58,6 +58,7 @@ struct idv_chunk {
     int64_t chunk_size;
     int64_t read_kept;
     ichunk_t *next_chunk;
+    bool processed;
 };
 
 chunkq_t *chunkq_create();

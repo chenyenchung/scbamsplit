@@ -23,7 +23,7 @@ int64_t KEY_SIZE = 512;
 int64_t RN_SIZE = 71;
 int64_t CB_LENGTH = 21;
 int64_t UB_LENGTH = 21;
-int64_t chunk_size = 400000; // Approximately 1GB
+int64_t chunk_size = 500000; // Approximately 1GB
 int64_t MAX_THREADS = 1;
 
 int main(int argc, char *argv[]) {
@@ -205,7 +205,7 @@ int main(int argc, char *argv[]) {
     }
 
     // Set chunk size by mem estimation
-    chunk_size = chunk_size * mem_scale / MAX_THREADS;
+    chunk_size = (chunk_size * mem_scale - 100000) / MAX_THREADS;
 
     // If the output prefix does not end with /, add it.
     uint16_t oplen = strlen(oprefix) - 1;
