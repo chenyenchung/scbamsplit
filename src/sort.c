@@ -4,6 +4,7 @@
 #include <string.h>
 #include <stdbool.h>
 #include <ctype.h>
+#include <lz4.h>
 #include "htslib/kstring.h"
 #include "sort.h"
 #include "utils.h"
@@ -74,6 +75,9 @@ int8_t get_CB (bam1_t *read, tag_meta_t* info, char* tag_ptr) {
             log_msg("Unknown location type to fetch cell barcode", ERROR);
             exit_code = 1;
     }
+    if (NULL == tag_ptr) {
+        exit_code = -1;
+    }
     return exit_code;
 }
 int8_t get_UB (bam1_t *read, tag_meta_t* info, char* tag_ptr) {
@@ -88,6 +92,9 @@ int8_t get_UB (bam1_t *read, tag_meta_t* info, char* tag_ptr) {
         default:
             log_msg("Unknown location type to fetch cell barcode", ERROR);
             exit_code = 1;
+    }
+    if (NULL == tag_ptr) {
+        exit_code = -1;
     }
     return exit_code;
 }
@@ -364,8 +371,6 @@ void chunk_destroy(sam_read_t **read_array, uint32_t chunk_size) {
     }
     free(read_array);
 }
-
-
 
 void sort_export_chunk(void *args_void) {
     chunk_arg_t *args =(chunk_arg_t *) args_void;

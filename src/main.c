@@ -308,7 +308,7 @@ int main(int argc, char *argv[]) {
             // Get read metadata
             int8_t ub_stat = get_UB(read, ub_meta, this_UB);
             int8_t cb_stat = get_CB(read, cb_meta, this_CB);
-            int16_t mapq = read->core.qual;
+            int16_t mapq = (int16_t) read->core.qual;
 
             if (-1 == cb_stat || -1 == ub_stat || mapq < mapq_thres) {
                 // Ignore reads without CB and UMI for consistency

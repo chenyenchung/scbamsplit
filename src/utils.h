@@ -68,6 +68,10 @@ int8_t read_dump(rt2label *r2l, rt2label *lout,
 int8_t deduped_dump(rt2label *r2l, rt2label *lout, label2fp *l2fp, label2fp *fout, char *tmpdir, char *sorted_path,
                     bam1_t *read, char *bc_tag, char *umi_tag, tag_meta_t *cb_meta, tag_meta_t *ub_meta);
 
+struct tmp_buf {
+
+};
+
 extern log_level_t OUT_LEVEL;
 extern char *OUT_PATH;
 extern bool dev;

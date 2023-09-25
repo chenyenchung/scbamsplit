@@ -3,7 +3,7 @@ project(scbamsplit C)
 include(CheckIPOSupported)
 
 set(CMAKE_C_STANDARD 99)
-set(CMAKE_BUILD_TYPE Release)
+set(CMAKE_BUILD_TYPE Debug)
 #########
 #https://github.com/luntergroup/octopus/blob/develop/build/cmake/modules/FindHTSlib.cmake
 #########
