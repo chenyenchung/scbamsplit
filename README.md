@@ -1,6 +1,11 @@
 # scbamsplit
 
-> Last updated: 2023-09-07
+> Last updated: 2024-03-20
+
+> [!CAUTION]
+> Please **DO NOT** use the duduplication (-d) flag since this experimental feature currently has a race condition-related bug after multithreading was added.
+> While we are working on the bug, you can still run `scbamsplit` without de-duplication, and feed the resultant BAM files into
+> [UMI-tools](https://umi-tools.readthedocs.io/en/latest/reference/dedup.html) to deduplicate.
 
 An open-source and light-weight tool to subset BAM files based on read tags in parallel
 powered by `htslib` and [`uthash`](https://troydhanson.github.io/uthash/) under MIT license.
